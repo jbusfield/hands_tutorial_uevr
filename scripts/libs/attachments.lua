@@ -106,16 +106,35 @@ Usage
                 grip_rifle = {label = "Rifle Grip"}
             })
 
-    attachments.print(text, logLevel) - prints a debug/log message with the specified log level
+    attachments.isActiveAttachmentMelee(hand) - checks if the attachment gripped by the specified hand is marked as melee
         example:
-            attachments.print("Attachment created", LogLevel.Info)
+            local isMelee = attachments.isActiveAttachmentMelee(Handed.Right)
+
+    attachments.isActiveAttachmentScoped(hand) - checks if the attachment gripped by the specified hand is marked as scoped
+        example:
+            local isScoped = attachments.isActiveAttachmentScoped(Handed.Right)
+
+    attachments.isActiveAttachmentTwoHanded(hand) - checks if the attachment gripped by the specified hand is marked as two-handed
+        example:
+            local isTwoHanded = attachments.isActiveAttachmentTwoHanded(Handed.Right)
+
+    attachments.allowChildVisibilityHandling(value) - sets whether attachments will control the visibility of their child components
+        value - boolean, true to allow child visibility handling, false to disable
+        example:
+            attachments.allowChildVisibilityHandling(true)
+
+    attachments.setGripUpdateTimeout(timeout) - determines how often to check for grip attachment changes
+		setting higher values can make weapon switch animations look better but can add input lag to attachment changes
+        timeout - the timeout value in milliseconds
+        example:
+            attachments.setGripUpdateTimeout(200)
 
 ]]--
 
 local uevrUtils = require("libs/uevr_utils")
 local configui = require("libs/configui")
 local controllers = require("libs/controllers")
---local gunstock = require("libs/gunstock")
+--local debugger = require("libs/uevr_debug")
 
 local M = {}
 
@@ -125,6 +144,9 @@ M.AttachType =
     CONTROLLER = 1,
     RAW_CONTROLLER = 2,
 }
+
+--how often to check for grip updates
+local gripUpdateTimeout = 200 --milliseconds
 
 local parametersFileName = "attachments_parameters"
 local parameters = {}
@@ -147,6 +169,7 @@ local activeGripAnimations = {}
 --local attachmentCallbacks = {}
 
 local stripParentNameNumericSuffix = false
+local allowChildVisibilityHandling = true --attachments will set the visibility of child components based on this flag
 
 local currentLogLevel = LogLevel.Error
 function M.setLogLevel(val)
@@ -173,7 +196,7 @@ local function executeGripAnimationChange(...)
 end
 
 
-local helpText = "This module allows you to configure attachment offsets for objects attached to meshes or controllers. You can specify position, rotation, scale, and grip animation for each attachment. New entries are added each time a new mesh is attached."
+local helpText = "This module allows you to configure attachment offsets for objects attached to meshes or controllers. You can specify position, rotation, scale, and grip animation for each attachment. New entries are added each time a new mesh is attached. Items colored blue indicate the currently selected right hand attachment. Items colored green indicate the currently selected left hand attachment. Items colored purple indicate the attachment is currently attached to both hands."
 
 function M.addAttachmentOffsetsToConfigUI(configDefinition, m_attachmentOffsets)
 	if m_attachmentOffsets == nil then m_attachmentOffsets = attachmentOffsets end
@@ -207,7 +230,13 @@ function M.addAttachmentOffsetsToConfigUI(configDefinition, m_attachmentOffsets)
 		local pos = m_attachmentOffsets[i]["location"]
 		local rot = m_attachmentOffsets[i]["rotation"]
 		local scale = m_attachmentOffsets[i]["scale"]
+		local isMelee = m_attachmentOffsets[i]["melee"]
+		local isTwoHanded = m_attachmentOffsets[i]["two_handed"]
+		local isScoped = m_attachmentOffsets[i]["scoped"]
 		local animation = m_attachmentOffsets[i]["animation"]
+		local anyChild = m_attachmentOffsets[i]["any_child"] and true or false
+		local anyParent = m_attachmentOffsets[i]["any_parent"] and true or false
+		local meleeRotationOffset = m_attachmentOffsets[i]["melee_rotation_offset"] or {0,0,0}
 		local selectedIndex = 1
 		for j = 1, #animationIDs do
 			if animation == animationIDs[j] then
@@ -239,10 +268,65 @@ function M.addAttachmentOffsetsToConfigUI(configDefinition, m_attachmentOffsets)
 					}
 		)
 		table.insert(configDefinition[1]["layout"],
-					{
-						id = "attachment_" .. name .. "_grip_animation", label = "Grip Animation",
-						widgetType = "combo", selections = animationLabels, initialValue = selectedIndex
-					}
+            {
+                widgetType = "checkbox",
+                id =  "attachment_" .. name .. "_is_melee",
+                label = "Melee",
+                initialValue = isMelee
+            }
+		)
+		table.insert(configDefinition[1]["layout"],
+            { widgetType = "same_line" }
+		)
+		table.insert(configDefinition[1]["layout"],
+            {
+                widgetType = "checkbox",
+                id =  "attachment_" .. name .. "_is_two_handed",
+                label = "Two Handed",
+                initialValue = isTwoHanded
+            }
+		)
+		table.insert(configDefinition[1]["layout"],
+            { widgetType = "same_line" }
+		)
+		table.insert(configDefinition[1]["layout"],
+            {
+                widgetType = "checkbox",
+                id =  "attachment_" .. name .. "_is_scoped",
+                label = "Scoped",
+                initialValue = isScoped
+            }
+		)
+		table.insert(configDefinition[1]["layout"],
+			{
+				id = "attachment_" .. name .. "_melee_rotation_offset", label = "Melee Rotation Offset",
+				widgetType = "drag_float3", speed = .1, range = {-360, 360}, initialValue = meleeRotationOffset, isHidden = isMelee ~= true
+			}
+		)
+		table.insert(configDefinition[1]["layout"],
+			{
+				id = "attachment_" .. name .. "_grip_animation", label = "Grip Animation",
+				widgetType = "combo", selections = animationLabels, initialValue = selectedIndex
+			}
+		)
+		table.insert(configDefinition[1]["layout"],
+            {
+                widgetType = "checkbox",
+                id =  "attachment_" .. name .. "_any_child",
+                label = "Use for all children",
+                initialValue = anyChild
+            }
+		)
+		table.insert(configDefinition[1]["layout"],
+            { widgetType = "same_line" }
+		)
+		table.insert(configDefinition[1]["layout"],
+            {
+                widgetType = "checkbox",
+                id =  "attachment_" .. name .. "_any_parent",
+                label = "Use for all parents",
+                initialValue = anyParent
+            }
 		)
 		table.insert(configDefinition[1]["layout"],
 				{
@@ -259,8 +343,27 @@ function M.addAttachmentOffsetsToConfigUI(configDefinition, m_attachmentOffsets)
 		configui.onUpdate("attachment_" .. name .. "_scale", function(value)
 			M.updateAttachmentTransform(nil, nil, value, id)
 		end)
+		configui.onCreateOrUpdate("attachment_" .. name .. "_is_melee", function(value)
+			M.updateAttachmentIsMelee(id, value)
+			configui.setHidden("attachment_" .. name .. "_melee_rotation_offset", not value)
+		end)
+		configui.onCreateOrUpdate("attachment_" .. name .. "_is_two_handed", function(value)
+			M.updateAttachmentIsTwoHanded(id, value)
+		end)
+		configui.onCreateOrUpdate("attachment_" .. name .. "_is_scoped", function(value)
+			M.updateAttachmentIsScoped(id, value)
+		end)
+		configui.onCreateOrUpdate("attachment_" .. name .. "_any_child", function(value)
+			M.updateAttachmentUseAnyChild(id, value)
+		end)
+		configui.onCreateOrUpdate("attachment_" .. name .. "_any_parent", function(value)
+			M.updateAttachmentUseAnyParent(id, value)
+		end)
 		configui.onUpdate("attachment_" .. name .. "_grip_animation", function(value)
 			M.updateAttachmentAnimation(id, value)
+		end)
+		configui.onUpdate("attachment_" .. name .. "_melee_rotation_offset", function(value)
+			M.updateMeleeRotationOffset(value, id)
 		end)
 
 	end
@@ -425,6 +528,30 @@ local function stripTrailingNumbers(str)
     return str:match("^(.-)%d*$")
 end
 
+local function getOverrideChildname(parentName)
+	--print("getOverrideChildname for parentName " .. parentName)
+	for i = 1, #attachmentOffsets do
+		if attachmentOffsets[i]["parent"] == parentName and attachmentOffsets[i]["any_child"] == true then
+			--print("Found any_child override for parent name " .. parentName)
+			return attachmentOffsets[i]["child"]
+		end
+	end
+	--print("No override child name found")
+	return ""
+end
+
+local function getOverrideParentname(childName)
+	--print("getOverrideParentname for childName " .. childName)
+	for i = 1, #attachmentOffsets do
+		if attachmentOffsets[i]["child"] == childName and attachmentOffsets[i]["any_parent"] == true then
+			--print("Found any_parent override for child name " .. childName)
+			return attachmentOffsets[i]["parent"]
+		end
+	end
+	--print("No override parent name found")
+	return ""
+end
+
 local function getAttachmentNames(attachment)
 	local attachmentParentName = uevrUtils.getShortName(attachment:get_outer())
 	local attachmentNameNoNumberSuffix = stripTrailingNumbers(attachmentParentName)
@@ -437,14 +564,23 @@ local function getAttachmentNames(attachment)
 		attachmentParentName = stripTrailingNumbers(attachmentParentName)
 	end
 
-	local attachmentChildName = ""
-	if attachment.StaticMesh ~= nil then
-		attachmentChildName = uevrUtils.getShortName(attachment.StaticMesh)
-	elseif attachment.SkeletalMesh ~= nil then
-		attachmentChildName = uevrUtils.getShortName(attachment.SkeletalMesh)
-	else
-		attachmentChildName = uevrUtils.getShortName(attachment)
+	local attachmentChildName = getOverrideChildname(attachmentParentName)
+	if attachmentChildName == "" then
+		if attachment.StaticMesh ~= nil then
+			attachmentChildName = uevrUtils.getShortName(attachment.StaticMesh)
+		elseif attachment.SkeletalMesh ~= nil then
+			attachmentChildName = uevrUtils.getShortName(attachment.SkeletalMesh)
+		else
+			attachmentChildName = uevrUtils.getShortName(attachment)
+		end
 	end
+
+
+	local attachmentParentName_Alt = getOverrideParentname(attachmentChildName)
+	if attachmentParentName_Alt ~= "" then
+		attachmentParentName = attachmentParentName_Alt
+	end
+
 	--print("getAttachmentNames",attachmentParentName, attachmentChildName)
 	return attachmentParentName, attachmentChildName, attachmentParentName .. "_" .. attachmentChildName
 end
@@ -576,22 +712,66 @@ end
 -- 	isParametersDirty = true
 -- end
 
+--there can be the same attachment class in both hands so we need to return all of them
 local function getAttachmentDataFromMeshAttachmentList(id)
+	local resultArray = {}
 	for meshName, meshData in pairs(meshAttachmentList) do
 		for attachmentName, attachmentData in pairs(meshData) do
-			if attachmentData == nil then
-				M.print("getAttachmentDataFromMeshAttachmentList had nil attachmentData " .. id)
-			elseif uevrUtils.getValid(attachmentData.attachment) ~= nil then
-				local _, _, attachmentID = getAttachmentNames(attachmentData.attachment)
-				M.print("Checking attachment " .. attachmentID .. " against " .. id)
-				if id == attachmentID then
-					M.print("Found matching attachment " .. attachmentID)
-					return attachmentData --.attachment, attachmentData.attachType, attachmentData.state
+			local ok, result = pcall(function()
+				if attachmentData == nil then
+					M.print("getAttachmentDataFromMeshAttachmentList had nil attachmentData " .. id)
+				elseif uevrUtils.getValid(attachmentData.attachment) ~= nil then
+					local _, _, attachmentID = getAttachmentNames(attachmentData.attachment)
+					M.print("Checking attachment " .. attachmentID .. " against " .. id)
+					if id == attachmentID then
+						M.print("Found matching attachment " .. attachmentID)
+						return attachmentData --.attachment, attachmentData.attachType, attachmentData.state
+					end
 				end
+			end)
+			if not ok then
+				M.print("Error in getAttachmentDataFromMeshAttachmentList: ")
+				meshData[attachmentName] = nil
+			end
+			if ok and result ~= nil then
+				table.insert(resultArray, result)
 			end
 		end
 	end
-	return nil --, nil, nil
+	return resultArray
+end
+
+function M.updateMeleeRotationOffset(rotationOffset, id)
+	for i = 1, #attachmentOffsets do
+		local attachmentID = attachmentOffsets[i]["id"]
+		if id == attachmentID then
+			attachmentOffsets[i]["melee_rotation_offset"] = {rotationOffset.X, rotationOffset.Y, rotationOffset.Z}
+		end
+	end
+	parameters["attachmentOffsets"] = attachmentOffsets
+	isParametersDirty = true
+end
+
+function M.getMeleeRotationOffset(id)
+	for i = 1, #attachmentOffsets do
+		local attachmentID = attachmentOffsets[i]["id"]
+		if id == attachmentID then
+			local rot = attachmentOffsets[i]["melee_rotation_offset"]
+			if rot ~= nil then
+				return uevrUtils.rotator(rot)
+			end
+		end
+	end
+	return uevrUtils.rotator(0,0,0)
+end
+
+function M.getActiveAttachmentMeleeRotationOffset(hand)
+	local attachment = M.getCurrentGrippedAttachment(hand)
+	if uevrUtils.getValid(attachment) ~= nil then
+		local _, _, attachmentID = getAttachmentNames(attachment)
+		return M.getMeleeRotationOffset(attachmentID)
+	end
+	return uevrUtils.rotator(0,0,0)
 end
 
 function M.setAttachmentOffset(id, location, rotation)
@@ -611,15 +791,84 @@ function M.updateAttachmentAnimation(id, animationIndex)
 		local attachmentID = attachmentOffsets[i]["id"]
 		if id == attachmentID then
 			attachmentOffsets[i]["animation"] = animationIDs[animationIndex]
-			--when we change the setting in configui, we also need to update the active animation
-			local attachmentData = getAttachmentDataFromMeshAttachmentList(id)
-			if attachmentData ~= nil and attachmentData.gripHand ~= nil then
-				M.setActiveAnimation(attachmentData.attachment, attachmentData.gripHand)
+			--when we change the setting in configui, we also need to update the active animation(s)
+			local attachmentDataArray = getAttachmentDataFromMeshAttachmentList(id)
+			for j = 1, #attachmentDataArray do
+				local attachmentData = attachmentDataArray[j]
+				if attachmentData ~= nil and attachmentData.gripHand ~= nil then
+					M.setActiveAnimation(attachmentData.attachment, attachmentData.gripHand)
+				end
 			end
 		end
 	end
 	parameters["attachmentOffsets"] = attachmentOffsets
 	isParametersDirty = true
+end
+
+local function updateAttachmentProperty(id, propertyName, value)
+	for i = 1, #attachmentOffsets do
+		local attachmentID = attachmentOffsets[i]["id"]
+		if id == attachmentID then
+			attachmentOffsets[i][propertyName] = value
+		end
+	end
+	parameters["attachmentOffsets"] = attachmentOffsets
+	isParametersDirty = true
+end
+
+function M.updateAttachmentUseAnyChild(id, anyChild)
+	updateAttachmentProperty(id, "any_child", anyChild)
+end
+
+function M.updateAttachmentUseAnyParent(id, anyParent)
+	updateAttachmentProperty(id, "any_parent", anyParent)
+end
+
+function M.updateAttachmentIsScoped(id, isScoped)
+	updateAttachmentProperty(id, "scoped", isScoped)
+end
+
+function M.updateAttachmentIsTwoHanded(id, isTwoHanded)
+	updateAttachmentProperty(id, "two_handed", isTwoHanded)
+end
+
+function M.updateAttachmentIsMelee(id, isMelee)
+	updateAttachmentProperty(id, "melee", isMelee)
+end
+
+local function checkAttachmentProperty(attachment, property)
+	--print("checkAttachmentProperty called for property " .. property, attachment)
+	if uevrUtils.getValid(attachment) ~= nil then
+		local _, _, attachmentID = getAttachmentNames(attachment)
+		--print("Checking attachment property " .. property .. " for attachment ID " .. attachmentID)
+		for i = 1, #attachmentOffsets do
+			if attachmentOffsets[i]["id"] == attachmentID then
+				return attachmentOffsets[i][property] == true
+			end
+		end
+	end
+	return false
+end
+
+function M.getActiveAttachmentID(hand)
+	local attachment = M.getCurrentGrippedAttachment(hand)
+	if uevrUtils.getValid(attachment) ~= nil then
+		local _, _, attachmentID = getAttachmentNames(attachment)
+		return attachmentID
+	end
+	return nil
+end
+
+function M.isActiveAttachmentMelee(hand)
+	return checkAttachmentProperty(M.getCurrentGrippedAttachment(hand), "melee")
+end
+
+function M.isActiveAttachmentScoped(hand)
+	return checkAttachmentProperty( M.getCurrentGrippedAttachment(hand), "scoped")
+end
+
+function M.isActiveAttachmentTwoHanded(hand)
+	return checkAttachmentProperty(M.getCurrentGrippedAttachment(hand), "two_handed")
 end
 
 -- local function getNamedAttachmentFromMeshAttachmentList(parentName, childName)
@@ -646,27 +895,30 @@ function M.updateAttachmentTransform(pos, rot, scale, id)
 	--only using rotationOffset on the Raw Controller currently assuming if the attachment is connected to a mesh then the mesh will be rotated
 	--local rotationOffset = gunstock.setActive(id)
 	M.print("Updating attachment transform for id " .. tostring(id))
-	local attachmentData = getAttachmentDataFromMeshAttachmentList(id)
+	local attachmentDataArray = getAttachmentDataFromMeshAttachmentList(id)
 	--local attachment, attachType, attachState = getAttachmentDataFromMeshAttachmentList(id)
-	if attachmentData ~= nil then
-		local attachment = attachmentData.attachment
-		local attachType = attachmentData.attachType
-		local attachState = attachmentData.state
-		if attachType == M.AttachType.RAW_CONTROLLER then
-			if attachState ~= nil then
-				if pos ~= nil then attachState:set_location_offset(Vector3f.new( pos.X, pos.Y, pos.Z)) end
-				-- if rot ~= nil then
-				-- 	local final = kismet_math_library:ComposeRotators( uevrUtils.rotator(rot.X, rot.Y + 90, rot.Z), rotationOffset * 1)
-				-- 	attachState:set_rotation_offset(Vector3f.new( math.rad(final.Pitch), math.rad(final.Yaw),  math.rad(final.Roll)))
-				-- end
-				if rot ~= nil then attachState:set_rotation_offset(Vector3f.new( math.rad(rot.X - gunstockRotationOffset.Pitch), math.rad(rot.Y + 90 - gunstockRotationOffset.Yaw),  math.rad(rot.Z - gunstockRotationOffset.Roll))) end
+	for j = 1, #attachmentDataArray do
+		local attachmentData = attachmentDataArray[j]
+		if attachmentData ~= nil then
+			local attachment = attachmentData.attachment
+			local attachType = attachmentData.attachType
+			local attachState = attachmentData.state
+			if attachType == M.AttachType.RAW_CONTROLLER then
+				if attachState ~= nil then
+					if pos ~= nil then attachState:set_location_offset(Vector3f.new( pos.X, pos.Y, pos.Z)) end
+					-- if rot ~= nil then
+					-- 	local final = kismet_math_library:ComposeRotators( uevrUtils.rotator(rot.X, rot.Y + 90, rot.Z), rotationOffset * 1)
+					-- 	attachState:set_rotation_offset(Vector3f.new( math.rad(final.Pitch), math.rad(final.Yaw),  math.rad(final.Roll)))
+					-- end
+					if rot ~= nil then attachState:set_rotation_offset(Vector3f.new( math.rad(rot.X - gunstockRotationOffset.Pitch), math.rad(rot.Y + 90 - gunstockRotationOffset.Yaw),  math.rad(rot.Z - gunstockRotationOffset.Roll))) end
+				end
 			end
-		end
-		if attachment ~= nil and (attachType == M.AttachType.MESH or attachType == M.AttachType.CONTROLLER) then
-			M.print("Setting attachment transform for attachment " .. tostring(attachment:get_full_name()))
-			if pos ~= nil then uevrUtils.set_component_relative_location(attachment, pos) end
-			if rot ~= nil then uevrUtils.set_component_relative_rotation(attachment, rot + gunstockRotationOffset) end
-			if scale ~= nil then uevrUtils.set_component_relative_scale(attachment, scale) end
+			if attachment ~= nil and (attachType == M.AttachType.MESH or attachType == M.AttachType.CONTROLLER) then
+				M.print("Setting attachment transform for attachment " .. tostring(attachment:get_full_name()))
+				if pos ~= nil then uevrUtils.set_component_relative_location(attachment, pos) end
+				if rot ~= nil then uevrUtils.set_component_relative_rotation(attachment, rot + gunstockRotationOffset) end
+				if scale ~= nil then uevrUtils.set_component_relative_scale(attachment, scale) end
+			end
 		end
 	end
 	-- for id, mesh in pairs(meshAttachmentList) do
@@ -712,26 +964,81 @@ end
 
 uevrUtils.registerUEVRCallback("gunstock_transform_change", function(id, location, rotation)
 	gunstockRotationOffset = rotation
-	local attachmentData = getAttachmentDataFromMeshAttachmentList(id)
+	local attachmentDataArray = getAttachmentDataFromMeshAttachmentList(id)
 	--local attachment, _, _ = getAttachmentDataFromMeshAttachmentList(id)
-	if attachmentData ~= nil and uevrUtils.getValid(attachmentData.attachment) ~= nil then
-		local loc, rot, scale = M.getAttachmentOffset(attachmentData.attachment)
-		M.updateAttachmentTransform(loc, rot, scale, id)
+	if attachmentDataArray ~= nil and #attachmentDataArray > 0 then
+		for j = 1, #attachmentDataArray do
+			local attachmentData = attachmentDataArray[j]
+			if attachmentData ~= nil and uevrUtils.getValid(attachmentData.attachment) ~= nil then
+				local loc, rot, scale = M.getAttachmentOffset(attachmentData.attachment)
+				M.updateAttachmentTransform(loc, rot, scale, id)
+			end
+		end
 	end
 end)
 
+function M.allowChildVisibilityHandling(value)
+	allowChildVisibilityHandling = value
+end
+
+local function updateSelectedColor(id, color)
+	--print("changing color", "attachment_" .. id)
+	configui.setColor("attachment_" .. id, color)
+end
+
+local function updateSelectedColors()
+	for i = 1, #attachmentOffsets do
+		local parent = attachmentOffsets[i]["parent"]
+		local child = attachmentOffsets[i]["child"]
+		local m_id = attachmentOffsets[i]["id"]
+		if m_id == nil then m_id = parent .. "_" .. child end
+		configui.setColor("attachment_" .. m_id, "#FFFFFFFF")
+	end
+
+	local leftAttachment = uevrUtils.getValid(M.getCurrentGrippedAttachment(Handed.Left))
+	local rightAttachment = uevrUtils.getValid(M.getCurrentGrippedAttachment(Handed.Right))
+	--print("Updating selected colors for left and right attachments", leftAttachment, rightAttachment)
+
+	local leftID, rightID = nil, nil
+	if leftAttachment ~= nil then
+		local _, _, m_leftID = getAttachmentNames(leftAttachment)
+		leftID = m_leftID
+	end
+	if rightAttachment ~= nil then
+		local _, _, m_rightID = getAttachmentNames(rightAttachment)
+		rightID = m_rightID
+	end
+
+	if leftID ~= nil and rightID ~= nil and leftID == rightID then
+		--set color to purple if both hands are holding the same attachment
+		updateSelectedColor(leftID, "#FF00FFFF")
+	else
+		if leftID ~= nil then
+			updateSelectedColor(leftID, "#00FF88FF")
+		end
+		if rightID ~= nil then
+			updateSelectedColor(rightID, "#0088FFFF")
+		end
+	end
+
+end
+
 function M.initAttachment(attachment, gripHand)
 	if attachment ~= nil then
+		attachment:SetVisibility(true, allowChildVisibilityHandling)
+		attachment:SetHiddenInGame(false, allowChildVisibilityHandling)
 		attachment:call("SetRenderInMainPass", true)
 		local location, rotation, scale = M.getAttachmentOffset(attachment)
 		local parentName, childName, id = getAttachmentNames(attachment)
 		M.print("Initializing attachment " .. id)
 		--TODO this seems redundant with setActiveAnimation
 		if gripHand ~= nil then
-			executeGripAttachmentChanged(id, gripHand)
+			executeGripAttachmentChanged(id, gripHand, attachment)
 		end
 		M.updateAttachmentTransform(location, rotation, scale, id)
 		M.setActiveAnimation(attachment, gripHand)
+
+		updateSelectedColors()
 	end
 end
 
@@ -755,18 +1062,31 @@ function M.setActiveAnimation(attachment, gripHand)
 		else
 			activeGripAnimations[gripHand] = false
 		end
-		--M.print("Calling callback for grip animation " .. activeGripAnimations[gripHand] .. " " .. gripHand)
+		M.print("Calling callback for grip animation " .. tostring(activeGripAnimations[gripHand]) .. " " .. tostring(gripHand))
 		executeGripAnimationChange(activeGripAnimations[gripHand], gripHand)
 		--executeAttachmentCallbacks("grip_animation", activeGripAnimations[gripHand], gripHand)
 	end
 end
 
 function M.getCurrentGrippedAttachment(gripHand)
+	if gripHand == nil then gripHand = Handed.Right end
 	if gripHand ~= nil then
 		for meshName, meshData in pairs(meshAttachmentList) do
 			for attachmentName, attachmentData in pairs(meshData) do
-				if attachmentData.gripHand == gripHand and uevrUtils.getValid(attachmentData.attachment) then
-					return attachmentData.attachment
+				local ok, result = pcall(function()
+					if attachmentData.gripHand == gripHand and uevrUtils.getValid(attachmentData.attachment) then
+						return attachmentData.attachment
+					end
+				end)
+				if not ok then
+					--this error happens when attachments are connected to hands meshes and the hands meshes get deallocated
+					--I dont know how that corrupts the meshAttachmentList which is just a lua table but cleaning it up fixes
+					--the issue without known negative side effects
+					M.print("Error in getCurrentGrippedAttachment. Cleaning up meshAttachmentList")
+					meshData[attachmentName] = nil
+				end
+				if ok and result ~= nil then
+					return result
 				end
 			end
 		end
@@ -777,7 +1097,7 @@ end
 function M.broadcastGrippedAttachmentRotation()
 	local leftAttachment = M.getCurrentGrippedAttachment(Handed.Left)
 	local rightAttachment = M.getCurrentGrippedAttachment(Handed.Right)
-	executeGripAttachmentRotationChange(leftAttachment and leftAttachment:GetSocketRotation(uevrUtils.fname_from_string("MuzzleSocket")) or nil, rightAttachment and rightAttachment:GetSocketRotation(uevrUtils.fname_from_string("MuzzleSocket")) or nil)
+	executeGripAttachmentRotationChange((leftAttachment and leftAttachment.GetSocketRotation ~= nil) and leftAttachment:GetSocketRotation(uevrUtils.fname_from_string("MuzzleSocket")) or nil, (rightAttachment and rightAttachment.GetSocketRotation ~= nil) and rightAttachment:GetSocketRotation(uevrUtils.fname_from_string("MuzzleSocket")) or nil)
 	--print("Broadcasting gripped attachment rotation", leftAttachment, rightAttachment)
 end
 
@@ -800,9 +1120,13 @@ end
 
 function M.attachToMesh(attachment, mesh, socketName, gripHand, detachFromParent, allowReattach)
 	local success = false
+	--print(attachment:get_full_name(), mesh:get_full_name(), socketName, tostring(gripHand), tostring(detachFromParent), tostring(allowReattach))
 	if uevrUtils.getValid(attachment) ~= nil and uevrUtils.getValid(mesh) ~= nil  then
 		--printMeshAttachmentList()
+
 		--see if the attachment is already a child of the mesh
+		--In atomic heart, the entire attachment can run apparently successfully and still not be attached to the mesh
+		--Something in the engine must disconnect it (probably the animation) after the attach call. So this check can not be removed.
 		if mesh.AttachChildren ~= nil then
 			for i, child in ipairs(mesh.AttachChildren) do
 				if child == attachment then
@@ -812,21 +1136,33 @@ function M.attachToMesh(attachment, mesh, socketName, gripHand, detachFromParent
 			end
 		end
 
+		local meshName = mesh:get_full_name()
+		local attachmentName = attachment:get_full_name()
+		--if it's already attached then just return
+		-- if meshAttachmentList[meshName] ~= nil and meshAttachmentList[meshName][attachmentName] ~= nil then
+		-- 	if meshAttachmentList[meshName][attachmentName]["attachment"] == attachment then
+		-- 		M.print("Attachment is already a child of the mesh")
+		-- 		return true
+		-- 	end
+		-- end
+		--M.print("Attachment is not a child of the mesh")
+
+		--M.detachAttachmentFromMeshes(attachment, true)
 		if gripHand ~= nil then
-			M.detachGripAttachments(gripHand)
+		 	M.detachGripAttachments(gripHand)
 		end
 
-		local meshName = mesh:get_full_name()
-		if meshAttachmentList[meshName] ==  nil then
+		--if meshAttachmentList[meshName] ==  nil then
 			meshAttachmentList[meshName] = {mesh=mesh}
-		end
-		local attachmentName = attachment:get_full_name()
-		if meshAttachmentList[meshName][attachmentName] == nil then
+		--end
+		--local attachmentName = attachment:get_full_name()
+		--if meshAttachmentList[meshName][attachmentName] == nil then
 			meshAttachmentList[meshName][attachmentName] = {attachment=attachment, socket=socketName, detachFromParent = detachFromParent, attachType = M.AttachType.MESH, gripHand = gripHand}
-		end
+		--end
 
 		if detachFromParent == true then
 			if allowReattach then
+				--print("Storing parent for reattachment", attachment.AttachParent)
 				meshAttachmentList[meshName][attachmentName].parent = attachment.AttachParent
 			end
 			attachment:DetachFromParent(false,false)
@@ -841,6 +1177,15 @@ function M.attachToMesh(attachment, mesh, socketName, gripHand, detachFromParent
 
 		M.initAttachment(attachment, gripHand)
 		M.print("Attached attachment to mesh" .. (success and " successfully" or " with errors"))
+
+		-- if mesh.AttachChildren ~= nil then
+		-- 	for i, child in ipairs(mesh.AttachChildren) do
+		-- 		if child == attachment then
+		-- 			M.print("Verified the mesh is actually attached")
+		-- 		end
+		-- 	end
+		-- end
+
 	else
 		M.print("Failed to attach attachment to mesh")
 	end
@@ -855,7 +1200,7 @@ function M.attachToController(attachment, controllerID, detachFromParent)
 	-- 	end
 	-- 	M.print("Attaching " .. attachment:get_full_name() .. " to controller with ID " .. controllerID)
 	-- 	controllers.attachComponentToController(controllerID, attachment, nil, nil, nil, true)
-		
+
 	-- 	attachment:call("SetRenderInMainPass", true)
 	-- 	M.updateOffset(attachment)
 	-- 	M.setActiveAnimation(attachment, controllerID)
@@ -867,7 +1212,7 @@ end
 
 function M.attachToRawController(attachment, gripHand, detachFromParent, allowReattach)
 	if uevrUtils.getValid(attachment) ~= nil then
-		local meshName = "Controller_Raw"
+		local meshName = "Controller_Raw" .. (gripHand and ("_" .. gripHand) or "")
 		local attachmentName = attachment:get_full_name()
 		--if it's already attached then just return
 		if meshAttachmentList[meshName] ~= nil and meshAttachmentList[meshName][attachmentName] ~= nil then
@@ -877,9 +1222,10 @@ function M.attachToRawController(attachment, gripHand, detachFromParent, allowRe
 		end
 
 		M.detachAttachmentsFromMesh(meshName)
-		if meshAttachmentList[meshName] ==  nil then
+
+		--if meshAttachmentList[meshName] ==  nil then
 			meshAttachmentList[meshName] = {mesh=nil}
-		end
+		--end
 		meshAttachmentList[meshName][attachmentName] = {attachment=attachment,  detachFromParent = detachFromParent, attachType = M.AttachType.RAW_CONTROLLER, gripHand = gripHand}
 
 		--print("Detaching", detachFromParent, attachment, attachment.AttachParent)
@@ -890,7 +1236,7 @@ function M.attachToRawController(attachment, gripHand, detachFromParent, allowRe
 			M.print("Detaching attachment from parent: " .. attachment.AttachParent:get_full_name())
 			attachment:DetachFromParent(false,false)
 		end
-		M.print("Attaching " .. attachment:get_full_name() .. " to controller with ID " .. gripHand)
+		M.print("Attaching " .. attachment:get_full_name() .. " to controller with ID " .. (gripHand and tostring(gripHand) or "nil"))
 		local state = UEVR_UObjectHook.get_or_add_motion_controller_state(attachment)
 		state:set_hand(gripHand)
 		state:set_permanent(allowReattach)
@@ -904,14 +1250,15 @@ function M.attachToRawController(attachment, gripHand, detachFromParent, allowRe
 end
 
 function M.detach(attachment, parent, attachType)
+	--print("Detaching attachment", attachment, parent or nil, attachType)
 	if uevrUtils.getValid(attachment) ~= nil then
 		if attachType == M.AttachType.RAW_CONTROLLER then
 			M.print("Detaching attachment from raw controller: " .. attachment:get_full_name())
 			UEVR_UObjectHook.remove_motion_controller_state(attachment)
 		end
+		M.print("Detaching attachment " .. attachment:get_full_name() .. (parent and (" and reattaching to parent: " .. parent:get_full_name()) or " did not reattach to parent because no parent existed"))
+		attachment:DetachFromParent(false,false)
 		if parent ~= nil then
-			M.print("Detaching attachment " .. attachment:get_full_name() .. " and reattaching to parent: " .. parent:get_full_name())
-			attachment:DetachFromParent(false,false)
 			attachment:K2_AttachTo(parent, attachment.AttachSocketName, 0, false)
 		end
 	else
@@ -919,17 +1266,64 @@ function M.detach(attachment, parent, attachType)
 	end
 end
 
+-- function M.logMeshAttachmentList()
+-- 	debugger.dump(meshAttachmentList)
+-- end
+
+-- meshAttachmentList = {
+-- 	MotionControllerComponent /Game/Maps/ADR_07_PRO/ADR_07_PRO.ADR_07_PRO.PersistentLevel.Actor_2147477481.MotionControllerComponent_2147477480 = {
+-- 		mesh = theContainer,
+-- 		["StaticMeshComponent /Game/Weapons/Meshes/Attachments/Scopes/SM_Scope_01.SM_Scope_01"] = {
+-- 			attachment = theAttachment,
+-- 			socket = "MuzzleSocket",
+-- 			detachFromParent = true,
+-- 			attachType = M.AttachType.MESH,
+-- 			gripHand = Handed.Right
+-- 		}
+-- 	}
+-- }
+
+function M.detachAllAttachments()
+	for meshName, meshData in pairs(meshAttachmentList) do
+		local currentParent = nil
+		local attachmentName = nil
+		for key, value in pairs(meshData) do
+			if key == "mesh" then
+				currentParent = value
+			else
+				attachmentName = key
+				if meshData[attachmentName].gripHand ~= nil then
+					activeGripAnimations[meshData[attachmentName].gripHand] = false
+				end
+				M.detach(meshData[attachmentName].attachment, meshData[attachmentName].parent, meshData[attachmentName].attachType)
+				meshData[attachmentName] = nil
+			end
+		end
+	end
+end
+
+
 --detach only the attachments that are grip attachments
 function M.detachGripAttachments(gripHand)
+	--print("Detaching grip attachments for hand: " .. tostring(gripHand))
+	--printMeshAttachmentList()
 	if gripHand ~= nil then
 		for meshName, meshData in pairs(meshAttachmentList) do
+			--print(" Checking mesh: " .. meshName)
 			for attachmentName, attachmentData in pairs(meshData) do
-				if attachmentData.gripHand == gripHand then
-					M.print("Detaching grip attachments for " .. attachmentName .. " for hand: " .. gripHand)
-					activeGripAnimations[attachmentData.gripHand] = false
-					M.detach(attachmentData.attachment, attachmentData.parent or nil, attachmentData.attachType)
-					meshData[attachmentName] = nil
-					executeGripAnimationChange(activeGripAnimations[gripHand], gripHand)
+				--print("  Checking attachment: " .. attachmentName .. " with gripHand: " .. tostring(attachmentData.gripHand))
+				local ok, result = pcall(function()
+					if attachmentData.gripHand == gripHand then
+						M.print("Detaching grip attachments for " .. attachmentName .. " for hand: " .. gripHand)
+						activeGripAnimations[attachmentData.gripHand] = false
+						M.detach(attachmentData.attachment, attachmentData.parent or nil, attachmentData.attachType)
+						--print("   Detached attachment: " .. attachmentName)
+						meshData[attachmentName] = nil
+						executeGripAnimationChange(activeGripAnimations[gripHand], gripHand)
+					end
+				end)
+				if not ok then
+					M.print("Error in detachGripAttachments: " .. tostring(result))
 				end
 			end
 		end
@@ -1004,7 +1398,35 @@ function M.setStripParentNameNumericSuffix(value)
 	end
 end
 
+local function deepEqual(t1, t2)
+    if type(t1) ~= "table" or type(t2) ~= "table" then
+        return t1 == t2
+    end
+
+    -- check keys in t1
+    for k, v in pairs(t1) do
+        if not deepEqual(v, t2[k]) then
+            return false
+        end
+    end
+
+    -- check keys in t2 (to catch extras)
+    for k, v in pairs(t2) do
+        if not deepEqual(v, t1[k]) then
+            return false
+        end
+    end
+
+    return true
+end
+
+local currentAnimationIDList = {}
 function M.setAnimationIDs(animationIDList)
+	--dont rewrite if nothing has changed
+	if deepEqual(animationIDList, currentAnimationIDList) then
+		return
+	end
+	currentAnimationIDList = animationIDList
 	if animationIDList ~= nil then
 		animationLabels = getAnimationLabelsArray(animationIDList)
 		animationIDs = getAnimationIDsArray(animationIDList)
@@ -1016,7 +1438,8 @@ function M.setAnimationIDs(animationIDList)
 			local selectedID = attachmentOffsets[i]["animation"]
 			for j = 1, #animationIDs do
 				if selectedID == animationIDs[j] then
-					configui.setValue("attachment_" .. name .. "_grip_animation", j)
+					--dont think callback is needed here since we're just updating the configui to match existing settings
+					configui.setValue("attachment_" .. name .. "_grip_animation", j, true)
 				end
 			end
 		end
@@ -1032,15 +1455,28 @@ local autoUpdateCallbackCreated = false
 --local autoUpdateCurrentMesh = nil
 function M.registerOnGripUpdateCallback(callback)
 	if not autoUpdateCallbackCreated then
-		uevrUtils.setInterval(200, function()
+		uevrUtils.setInterval(gripUpdateTimeout, function()
 			local rightAttachment, rightMesh, rightSocketName, leftAttachment, leftMesh, leftSocketName, detachFromParent, allowReattach = callback()
+			-- print("Before")
+			-- printMeshAttachmentList()
+			-- print("Left",activeGripAnimations[Handed.Left])
+			-- print("Right",activeGripAnimations[Handed.Right])
+
 			--print(attachment, mesh, autoUpdateCurrentAttachment)
 			if detachFromParent == nil then detachFromParent = true end
 			if allowReattach == nil then allowReattach = false end
 
-			-- if rightAttachment is nil then remove all right grip attachments
+			-- detach them first so switchiing left to right isnt affected
 			if rightAttachment == nil then
 				M.detachGripAttachments(Handed.Right)
+			end
+			if leftAttachment == nil then
+				M.detachGripAttachments(Handed.Left)
+			end
+
+			-- if rightAttachment is nil then remove all right grip attachments
+			if rightAttachment == nil then
+				--M.detachGripAttachments(Handed.Right)
 			elseif rightMesh == nil then
 				M.attachToRawController(rightAttachment, Handed.Right, detachFromParent, allowReattach)
 			else
@@ -1049,13 +1485,18 @@ function M.registerOnGripUpdateCallback(callback)
 
 			-- if leftAttachment is nil then remove all left grip attachments
 			if leftAttachment == nil then
-				M.detachGripAttachments(Handed.Left)
+				--M.detachGripAttachments(Handed.Left)
 			elseif leftMesh == nil then
 				M.attachToRawController(leftAttachment, Handed.Left, detachFromParent, allowReattach)
 			else
 				M.attachToMesh(leftAttachment, leftMesh, leftSocketName, Handed.Left, detachFromParent, allowReattach)
 			end
-			
+
+			-- print("After")
+			-- printMeshAttachmentList()
+			-- print("Left",activeGripAnimations[Handed.Left])
+			-- print("Right",activeGripAnimations[Handed.Right])
+
 			-- if rightMesh == nil and rightAttachment == nil then
 			-- 	--do nothing
 			-- elseif rightMesh == nil and rightAttachment ~= nil then
@@ -1097,6 +1538,15 @@ function M.registerOnGripAnimationCallback(callbackFunc)
 	registerAttachmentCallback("attachment_grip_animation_changed", callbackFunc)
 end
 
+function M.registerAttachmentChangeCallback(callbackFunc)
+	uevrUtils.registerUEVRCallback("attachment_grip_changed", callbackFunc)
+end
+
+--determines how often to check for grip attachment changes
+function M.setGripUpdateTimeout(timeout)
+	gripUpdateTimeout = timeout
+end
+
 uevrUtils.registerPreLevelChangeCallback(function(level)
 	meshAttachmentList = {}
 	activeGripAnimations = {}
@@ -1104,6 +1554,10 @@ end)
 
 uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
 	M.broadcastGrippedAttachmentRotation()
+end)
+
+uevr.params.sdk.callbacks.on_script_reset(function()
+	M.detachAllAttachments()
 end)
 
 M.loadParameters()

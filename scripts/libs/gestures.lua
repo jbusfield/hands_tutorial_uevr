@@ -16,7 +16,7 @@ local holsterTriggerAngle = -65.0
 
 local M = {}
 
-M.Gesture = 
+M.Gesture =
 {
 	PUNCH = 0,
 	HOLSTER = 1,
@@ -29,6 +29,12 @@ M.Gesture =
 	HEADSCRATCH = 8,
 	LIPSCRATCH = 9,
 	EYESCRATCH = 10,
+	SWIPE_LEFT = 11,
+	SWIPE_RIGHT = 12,
+	SWIPE_UP = 13,
+	SWIPE_DOWN = 14,
+	SNATCH = 15,
+	GRIP_COMPONENT = 16,
 }
 
 local currentLogLevel = LogLevel.Error
@@ -45,6 +51,12 @@ end
 local autoDetect = {}
 local hasPunchGesture = false
 local punchStrengthPercent = 0
+local hasSwipeLeft = false
+local hasSwipeRight = false
+local hasSwipeUp = false
+local hasSwipeDown = false
+local hasSnatch = false
+local swipeStrengthPercent = 0
 
 local punchDetector = {
     prevLocalPos = nil,
@@ -164,16 +176,16 @@ function punchDetector:update(controllerPos, controllerRot, pawnPos, pawnRot, de
     if self.cooldown > 0 then
         self.cooldown = self.cooldown - deltaTime
  		self.prevLocalPos = getLocalControllerPos(controllerPos, pawnPos, pawnRot)
-       return false
+       return false, 0, 0
     end
 
     if not self.prevLocalPos then
  		self.prevLocalPos = getLocalControllerPos(controllerPos, pawnPos, pawnRot)
-        return false
+        return false, 0, 0
     end
-	
+
 	local localPos = getLocalControllerPos(controllerPos, pawnPos, pawnRot)
-	
+
     local localDelta = subtract(localPos, self.prevLocalPos)
     local speed = magnitude(localDelta) / deltaTime
     --local forward = rotationToForwardVector(controllerRot)
@@ -207,8 +219,131 @@ function punchDetector:update(controllerPos, controllerRot, pawnPos, pawnRot, de
     return isPunch, punchSpeedPercent, punchSpeed
 end
 
+local swipeDetectors = {
+    [Handed.Left] = {
+        prevControllerPos = nil,
+        prevPawnPos = nil,
+        prevPawnRot = nil,
+        cooldown = 0,
+        minThresholdSpeed = 180,
+        maxThresholdSpeed = 320,
+        directionThreshold = 0.001,
+        cooldownTime = 0.5,
+        peakMotionVector = nil,
+        peakSpeed = 0
+    },
+    [Handed.Right] = {
+        prevControllerPos = nil,
+        prevPawnPos = nil,
+        prevPawnRot = nil,
+        cooldown = 0,
+        minThresholdSpeed = 180,
+        maxThresholdSpeed = 320,
+        directionThreshold = 0.001,
+        cooldownTime = 0.5,
+        peakMotionVector = nil,
+        peakSpeed = 0
+    }
+}
+
+local function updateSwipeDetector(self, controllerPos, controllerRot, pawnPos, pawnRot, deltaTime)
+    if self.cooldown > 0 then
+        self.cooldown = self.cooldown - deltaTime
+ 		self.prevControllerPos = controllerPos
+ 		self.prevPawnPos = pawnPos
+       return false, false, false, false, false, false, 0
+    end
+
+    if not self.prevControllerPos or not self.prevPawnPos or not self.prevPawnRot then
+ 		self.prevControllerPos = controllerPos
+ 		self.prevPawnPos = pawnPos
+ 		self.prevPawnRot = pawnRot
+        return false, false, false, false, false, false, 0
+    end
+
+	local controllerDelta = subtract(controllerPos, self.prevControllerPos)
+	local pawnDelta = subtract(pawnPos, self.prevPawnPos)
+
+	-- Skip detection if it looks like a snap turn (sudden large rotation)
+	if math.abs(pawnRot.Yaw - self.prevPawnRot.Yaw) > math.rad(45) then
+		self.prevControllerPos = controllerPos
+		self.prevPawnPos = pawnPos
+		self.prevPawnRot = pawnRot
+		return false, false, false, false, false, false, 0
+	end
+
+    local localDelta = subtract(controllerDelta, pawnDelta)
+    local speed = magnitude(localDelta) / deltaTime
+    local motionDir = normalize(localDelta)
+
+	local isSwipeLeft = false
+	local isSwipeRight = false
+	local isSwipeUp = false
+	local isSwipeDown = false
+	local isPunch = false
+	local isSnatch = false
+
+	local swipeSpeedPercent = 0
+
+	-- Track peak motion during acceleration
+	local swipeDetected = false
+	if speed > self.minThresholdSpeed then
+		if speed > self.peakSpeed then
+			self.peakSpeed = speed
+			self.peakMotionVector = motionDir
+		end
+		swipeDetected = true
+	end
+
+	-- Check if movement has peaked and is now slowing down
+	if not swipeDetected and self.peakSpeed > 0 and self.peakMotionVector then
+		-- Analyze the peak motion vector for directional components
+		local peakVector = self.peakMotionVector
+
+		-- Always classify horizontal (left/right) - use sign of Y component, default to right if Y ≈ 0
+		if peakVector and peakVector.Y < -self.directionThreshold then
+			isSwipeLeft = true
+		else
+			isSwipeRight = true  -- Default to right for Y >= -threshold
+		end
+
+		-- Always classify vertical (up/down) - use sign of Z component, default to up if Z ≈ 0
+		if peakVector and peakVector.Z > self.directionThreshold then
+			isSwipeUp = true
+		else
+			isSwipeDown = true  -- Default to down for Z <= threshold
+		end
+
+		-- Check forward/backward components (punch/snatch) - only if significant
+		if peakVector and math.abs(peakVector.X) > self.directionThreshold then
+			if peakVector.X > 0 then
+				isPunch = true
+			else
+				isSnatch = true
+			end
+		end
+
+		swipeSpeedPercent = getSpeedPercent(self.peakSpeed, self.minThresholdSpeed, self.maxThresholdSpeed)
+
+		-- Reset for next gesture
+		self.peakSpeed = 0
+		self.peakMotionVector = nil
+	end
+
+    if isSwipeLeft or isSwipeRight or isSwipeUp or isSwipeDown or isPunch or isSnatch then
+        self.cooldown = self.cooldownTime
+    end
+
+    -- Update history
+    self.prevControllerPos = controllerPos
+    self.prevPawnPos = pawnPos
+    self.prevPawnRot = pawnRot
+
+    return isSwipeLeft, isSwipeRight, isSwipeUp, isSwipeDown, isPunch, isSnatch, swipeSpeedPercent
+end
+
 local holsterGripOn = false
-function detectHolster(state, hand, continuous)
+local function detectHolster(state, hand, continuous)
 	local gripButton = XINPUT_GAMEPAD_RIGHT_SHOULDER
 	if hand == Handed.Left then
 		gripButton = XINPUT_GAMEPAD_LEFT_SHOULDER
@@ -218,7 +353,7 @@ function detectHolster(state, hand, continuous)
 		local rotation = controllers.getControllerRotation(hand)
 		--print(rotation.Pitch,rotation.Yaw,rotation.Roll)
 		--only holster if the hand is pointing down
-		if rotation.Pitch < holsterTriggerAngle then
+		if rotation ~= nil and rotation.Pitch < holsterTriggerAngle then
 			return true
 		end
 	elseif holsterGripOn and uevrUtils.isButtonNotPressed(state, gripButton)  then
@@ -228,7 +363,7 @@ function detectHolster(state, hand, continuous)
 end
 
 local reloadGripOn = false
-function detectReload(state, hand, continuous)
+local function detectReload(state, hand, continuous)
 	local gripButton = XINPUT_GAMEPAD_LEFT_SHOULDER
 	if hand == Handed.Left then
 		gripButton = XINPUT_GAMEPAD_RIGHT_SHOULDER
@@ -279,10 +414,10 @@ end
 -- end
 
 local headGripOn = false
-function detectFace(state, hand, continuous)
+local function detectFace(state, hand, continuous)
 	local gripMouth, gripEyes, gripHead, gripEar = false, false, false, false
 	local triggerMouth, triggerEyes, triggerHead, triggerEar = false, false, false, false
-	
+
 	local isGripped, isTriggerred = false, false
 	if hand == Handed.Right then
 		isGripped = uevrUtils.isButtonPressed(state, XINPUT_GAMEPAD_RIGHT_SHOULDER)
@@ -291,7 +426,7 @@ function detectFace(state, hand, continuous)
 		isGripped = uevrUtils.isButtonPressed(state, XINPUT_GAMEPAD_LEFT_SHOULDER)
 		isTriggerred = state.Gamepad.bLeftTrigger > 128
 	end
-	
+
 	local gripButton = XINPUT_GAMEPAD_RIGHT_SHOULDER
 	if hand == Handed.Left then
 		gripButton = XINPUT_GAMEPAD_LEFT_SHOULDER
@@ -307,16 +442,16 @@ function detectFace(state, hand, continuous)
 			local distance = magnitude(subtract(handLocation, headLocation))
 			--local distance = kismet_math_library:Vector_Distance(headLocation, handLocation)
 			--print(distance, forwardDot, headLocation.Z-handLocation.Z)
-			if distance < mouthTriggerDistance and forwardDot > mouthForwardDotMinThreshold and forwardDot < mouthForwardDotMaxThreshold and headLocation.Z-handLocation.Z > 0 then	
+			if distance < mouthTriggerDistance and forwardDot > mouthForwardDotMinThreshold and forwardDot < mouthForwardDotMaxThreshold and headLocation.Z-handLocation.Z > 0 then
 				gripMouth = isGripped
 				triggerMouth = isTriggerred
-			elseif distance < headTriggerDistance and forwardDot > headForwardDotMinThreshold and forwardDot < headForwardDotMaxThreshold and headLocation.Z-handLocation.Z < 0 then	
+			elseif distance < headTriggerDistance and forwardDot > headForwardDotMinThreshold and forwardDot < headForwardDotMaxThreshold and headLocation.Z-handLocation.Z < 0 then
 				gripHead = isGripped
 				triggerHead = isTriggerred
-			elseif distance < eyesTriggerDistance and forwardDot > eyesForwardDotThreshold then	
+			elseif distance < eyesTriggerDistance and forwardDot > eyesForwardDotThreshold then
 				gripEyes = isGripped
 				triggerEyes = isTriggerred
-			end		
+			end
 
 			local headRightVector = controllers.getControllerRightVector(2)
 			--local headToHandForwardVector = normalize(subtract(handLocation, headLocation))
@@ -324,11 +459,11 @@ function detectFace(state, hand, continuous)
 			--local distance = magnitude(subtract(handLocation, headLocation))
 			--local distance = kismet_math_library:Vector_Distance(headLocation, handLocation)
 			--print(distance,forwardDot)
-			if distance < earGripTriggerDistance and forwardDot > earGripForwardDotThreshold then	
+			if distance < earGripTriggerDistance and forwardDot > earGripForwardDotThreshold then
 				gripEar = isGripped
 				triggerEar = isTriggerred
 			end
-			
+
 		end
 	elseif headGripOn and not (isGripped or isTriggerred) then
 		headGripOn = false
@@ -339,21 +474,31 @@ end
 function M.getGesture(id)
 	if id == M.Gesture.PUNCH then
 		 return hasPunchGesture, punchStrengthPercent
+	elseif id == M.Gesture.SWIPE_LEFT then
+		return hasSwipeLeft, swipeStrengthPercent
+	elseif id == M.Gesture.SWIPE_RIGHT then
+		return hasSwipeRight, swipeStrengthPercent
+	elseif id == M.Gesture.SWIPE_UP then
+		return hasSwipeUp, swipeStrengthPercent
+	elseif id == M.Gesture.SWIPE_DOWN then
+		return hasSwipeDown, swipeStrengthPercent
+	elseif id == M.Gesture.SNATCH then
+		return hasSnatch, swipeStrengthPercent
 	end
 end
 
 function M.detectGesture(id, deltaTime, hand, currentPos, currentRot, pawnPos, pawnRot )
 	if hand == nil then hand = Handed.Right end
-	if currentPos == nil then 
+	if currentPos == nil then
 		currentPos = controllers.getControllerLocation(hand)
 	end
-	if currentRot == nil then 
+	if currentRot == nil then
 		currentRot = controllers.getControllerRotation(hand)
 	end
-	if pawnPos == nil then 
+	if pawnPos == nil then
 		pawnPos = controllers.getControllerLocation(2)
 	end
-	if pawnRot == nil then 
+	if pawnRot == nil then
 		pawnRot = controllers.getControllerRotation(2)
 	end
 	if currentPos == nil or currentRot == nil or pawnPos == nil or pawnRot == nil then
@@ -363,6 +508,20 @@ function M.detectGesture(id, deltaTime, hand, currentPos, currentRot, pawnPos, p
 		if id == M.Gesture.PUNCH then
 			 hasPunchGesture, punchStrengthPercent = punchDetector:update(currentPos, currentRot, pawnPos, pawnRot, deltaTime)
 			 return hasPunchGesture, punchStrengthPercent
+		elseif id == M.Gesture.SWIPE_LEFT or id == M.Gesture.SWIPE_RIGHT or id == M.Gesture.SWIPE_UP or
+		       id == M.Gesture.SWIPE_DOWN or id == M.Gesture.SNATCH then
+			hasSwipeLeft, hasSwipeRight, hasSwipeUp, hasSwipeDown, _, hasSnatch, swipeStrengthPercent = updateSwipeDetector(swipeDetectors[hand], currentPos, currentRot, pawnPos, pawnRot, deltaTime)
+			if id == M.Gesture.SWIPE_LEFT then
+				return hasSwipeLeft, swipeStrengthPercent
+			elseif id == M.Gesture.SWIPE_RIGHT then
+				return hasSwipeRight, swipeStrengthPercent
+			elseif id == M.Gesture.SWIPE_UP then
+				return hasSwipeUp, swipeStrengthPercent
+			elseif id == M.Gesture.SWIPE_DOWN then
+				return hasSwipeDown, swipeStrengthPercent
+			elseif id == M.Gesture.SNATCH then
+				return hasSnatch, swipeStrengthPercent
+			end
 		end
 	end
 	return false
@@ -400,19 +559,116 @@ function M.detectGestureWithState(id, state, hand, continuous)
 	end
 end
 
+function M.detectComponentGrab(state, hand, component, maxDistance)
+	if component ~= nil then
+		if uevrUtils.isButtonPressed(state, hand == Handed.Left and XINPUT_GAMEPAD_LEFT_SHOULDER or XINPUT_GAMEPAD_RIGHT_SHOULDER) then
+			--check if the hand is close to a component
+			local distance = controllers.getDistanceFromController(hand, component)
+			--print(distance)
+			if distance ~= nil and distance < (maxDistance or 10) then
+				--print("Grabbing component")
+				return true, distance
+			end
+		end
+	end
+	return false, nil
+end
+
 function M.getHeadGestures(state, hand, continuous)
 	return detectFace(state, hand, continuous)
 end
 
-function M.autoDetectGesture(id, val)
+function M.getSwipeGestures(deltaTime, hand, currentPos, currentRot, pawnPos, pawnRot)
+	if hand == nil then hand = Handed.Right end
+	if currentPos == nil then
+		currentPos = controllers.getControllerLocation(hand)
+	end
+	if currentRot == nil then
+		currentRot = controllers.getControllerRotation(hand)
+	end
+	if pawnPos == nil then
+		pawnPos = controllers.getControllerLocation(2)
+	end
+	if pawnRot == nil then
+		pawnRot = controllers.getControllerRotation(2)
+	end
+	if currentPos == nil or currentRot == nil or pawnPos == nil or pawnRot == nil then
+		return false, false, false, false, false, false, 0
+	else
+		return updateSwipeDetector(swipeDetectors[hand], currentPos, currentRot, pawnPos, pawnRot, deltaTime)
+	end
+end
+
+function M.autoDetectGesture(id, val, hand)
 	if val == nil then val = true end
-	autoDetect[id] = val
+	if hand == nil then hand = Handed.Right end
+	if autoDetect[id] == nil then
+		autoDetect[id] = {}
+	end
+	autoDetect[id][hand] = val
+end
+
+local function hasAutodetect(id, hand)
+	if autoDetect[id] ~= nil then
+		return autoDetect[id][hand] == true
+	end
+	return false
 end
 
 uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
-	if autoDetect[M.Gesture.PUNCH] == true then
-		M.detectGesture(M.Gesture.PUNCH, delta)
+	if hasAutodetect(M.Gesture.PUNCH, Handed.Right) then
+		M.detectGesture(M.Gesture.PUNCH, delta, Handed.Right)
+	end
+	if hasAutodetect(M.Gesture.PUNCH, Handed.Left) then
+		M.detectGesture(M.Gesture.PUNCH, delta, Handed.Left)
+	end
+	if hasAutodetect(M.Gesture.SWIPE_LEFT, Handed.Right) or hasAutodetect(M.Gesture.SWIPE_RIGHT, Handed.Right) or hasAutodetect(M.Gesture.SWIPE_UP, Handed.Right) or hasAutodetect(M.Gesture.SWIPE_DOWN, Handed.Right) or hasAutodetect(M.Gesture.SNATCH, Handed.Right) then
+		local left, right, up, down, punch, snatch, strength = M.getSwipeGestures(delta, Handed.Right)
+
+		if left then uevrUtils.executeUEVRCallbacks("on_gesture_swipe_left", strength, Handed.Right) end
+		if right then uevrUtils.executeUEVRCallbacks("on_gesture_swipe_right", strength, Handed.Right) end
+		if up then uevrUtils.executeUEVRCallbacks("on_gesture_swipe_up", strength, Handed.Right) end
+		if down then uevrUtils.executeUEVRCallbacks("on_gesture_swipe_down", strength, Handed.Right) end
+		-- if left or right or up or down or punch or snatch then
+		-- 	print("Swipe Left: "..tostring(left)..", Right: "..tostring(right)..", Up: "..tostring(up)..", Down: "..tostring(down)..", Punch: "..tostring(punch)..", Snatch: "..tostring(snatch)..", Strength: "..tostring(strength))
+		-- end
+	end
+	if hasAutodetect(M.Gesture.SWIPE_LEFT, Handed.Left) or hasAutodetect(M.Gesture.SWIPE_RIGHT, Handed.Left) or hasAutodetect(M.Gesture.SWIPE_UP, Handed.Left) or hasAutodetect(M.Gesture.SWIPE_DOWN, Handed.Left) or hasAutodetect(M.Gesture.SNATCH, Handed.Left) then
+		local left, right, up, down, punch, snatch, strength = M.getSwipeGestures(delta, Handed.Left)
+
+		if left then uevrUtils.executeUEVRCallbacks("on_gesture_swipe_left", strength, Handed.Left) end
+		if right then uevrUtils.executeUEVRCallbacks("on_gesture_swipe_right", strength, Handed.Left) end
+		if up then uevrUtils.executeUEVRCallbacks("on_gesture_swipe_up", strength, Handed.Left) end
+		if down then uevrUtils.executeUEVRCallbacks("on_gesture_swipe_down", strength, Handed.Left) end
 	end
 end)
 
+local function registerGestureDetection(id, rightHand, leftHand)
+	if rightHand == nil and leftHand == nil then
+		M.autoDetectGesture(id, true, Handed.Right)
+	else
+		if rightHand == true then
+			M.autoDetectGesture(id, true, Handed.Right)
+		end
+		if leftHand == true then
+			M.autoDetectGesture(id, true, Handed.Left)
+		end
+	end
+end
+function M.registerSwipeLeftCallback(callback, rightHand, leftHand)
+	registerGestureDetection(M.Gesture.SWIPE_LEFT, rightHand, leftHand)
+	uevrUtils.registerUEVRCallback("on_gesture_swipe_left", callback)
+end
+function M.registerSwipeRightCallback(callback, rightHand, leftHand)
+	registerGestureDetection(M.Gesture.SWIPE_RIGHT, rightHand, leftHand)
+	uevrUtils.registerUEVRCallback("on_gesture_swipe_right", callback)
+end
+function M.registerSwipeUpCallback(callback, rightHand, leftHand)
+	registerGestureDetection(M.Gesture.SWIPE_UP, rightHand, leftHand)
+	uevrUtils.registerUEVRCallback("on_gesture_swipe_up", callback)
+end
+function M.registerSwipeDownCallback(callback, rightHand, leftHand)
+	registerGestureDetection(M.Gesture.SWIPE_DOWN, rightHand, leftHand)
+	uevrUtils.registerUEVRCallback("on_gesture_swipe_down", callback)
+end
 return M

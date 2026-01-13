@@ -1,5 +1,5 @@
 
--- The following code includes contributions from markmon, Pande4360 and Rusty Gere
+-- The following code includes contributions from markmon, Pande4360, Rusty Gere and lobotomy
 
 --[[ 
 Usage
@@ -52,7 +52,7 @@ Usage
 			initLevel()   -- does nothing
 			-- game level changes
 			initLevel()   -- prints Level init again 
-			initGlobal.reset() -- even though this function was set as Once.EVER you can manually reset it
+			initGlobal:reset() -- even though this function was set as Once.EVER you can manually reset it
 			initGlobal()  -- prints Global init
 			
 			-- doOnce is also fault tolerant and can re-execute on failure. Just call error() on failure. 
@@ -73,6 +73,22 @@ Usage
 			canFail() 	-- prints canFail succeeded 
 			canFail()   -- does nothing
 			canFail()   -- does nothing
+
+	createDeferral(name, timeoutMs, callback) or uevrUtils.createDeferral(name, timeoutMs, callback) - creates a named deferral that will execute 
+		a callback function after a specified timeout. The deferral starts inactive and must be activated with updateDeferral().
+		example:
+			uevrUtils.createDeferral("reload_cooldown", 2000, function()
+				print("Reload cooldown finished - can reload again")
+			end)
+			
+	updateDeferral(name) or uevrUtils.updateDeferral(name) - activates a deferral, starting its countdown timer. If the deferral is already 
+		active, this resets the countdown to the full timeout duration.
+		example:
+			uevrUtils.updateDeferral("reload_cooldown")  -- starts or restarts the 2-second countdown
+			
+	destroyDeferral(name) or uevrUtils.destroyDeferral(name) - removes a deferral entirely, preventing it from executing its callback.
+		example:
+			uevrUtils.destroyDeferral("reload_cooldown")  -- cancels the deferral
 
 	uevrUtils.vector_2(x, y, reuseable) - returns a CoreUObject.Vector2D structure with the given params
 		example:
@@ -259,6 +275,28 @@ Usage
 		example:
 			local fname = uevrUtils.fname_from_string("Mesh")
 			
+	uevrUtils.tagFromString(name) - creates an FGameplayTag from a string tag name
+		example:
+			local tag = uevrUtils.tagFromString("Equipment.Weapon.Melee")
+			local weapon = pawn:GetEquippedActorFromSlot(tag)
+			
+	uevrUtils.stringFromTag(tag) - converts an FGameplayTag to its string representation
+		example:
+			local tagString = uevrUtils.stringFromTag(tag)
+			print("Tag is:", tagString)  -- prints "Equipment.Weapon.Melee"
+			
+	uevrUtils.indexOf(array, value) - finds the index of a value in an array, returns nil if not found
+		example:
+			local weapons = {"sword", "bow", "staff"}
+			local index = uevrUtils.indexOf(weapons, "bow")  -- returns 2
+			local notFound = uevrUtils.indexOf(weapons, "axe")  -- returns nil
+			
+	uevrUtils.deepCopyTable(orig) - creates a deep copy of a table, recursively copying nested tables
+		example:
+			local original = { a = 1, b = { c = 2, d = 3 } }
+			local copy = uevrUtils.deepCopyTable(original)
+			copy.b.c = 99  -- original.b.c remains 2
+			
 	uevrUtils.color_from_rgba(r,g,b,a,reuseable) or color_from_rgba(r,g,b,a,reuseable) - returns a CoreUObject.LinearColor struct with the given params in the range of 0.0 to 1.0
 		If reuseable is true a cached struct is returned. This is faster but if you need two instances for the same function call this would not work
 		example:
@@ -342,6 +380,10 @@ Usage
 			if uevrUtils.isGamePaused() then
 				print("Game is paused")
 			end
+
+	uevrUtils.pauseGame(value) - pause or unpause the game
+		example:
+			uevrUtils.pauseGame(true)  -- pauses the game
 			
 	uevrUtils.isFadeHardLocked() - returns whether the camera fade is currently hard locked
 		example:
@@ -459,6 +501,11 @@ Usage
 			local hudComponent = uevrUtils.createWidgetComponent(widget, {removeFromViewport=true, twoSided=true, drawSize=vector_2(620, 75)})	
 			local hudComponent = uevrUtils.createWidgetComponent("WidgetBlueprintGeneratedClass /Game/UI/HUD/Reticle/Reticle_BP.Reticle_BP_C", {removeFromViewport=true, twoSided=true, drawSize=vector_2(100, 100)})	
 	
+	uevrUtils.setWidgetLayout(widget, scale, alignment) - sets the layout of a widget, including scale and alignment in the viewport
+		scale and alignment are Vector2D structs representing normalized values (0.0 to 1.0) for scale and (-1.0 to 1.0) for alignment
+		example:
+			uevrUtils.setWidgetLayout(myWidget, uevrUtils.vector2D(0.5, 0.5), uevrUtils.vector2D(0.5, 0.5))
+	
 	uevrUtils.fixMeshFOV(mesh, propertyName, value, (optional)includeChildren, (optional)includeNiagara, (optional)showDebug) --Removes the FOV distortions that 
 		many flat FPS games apply to player and weapon meshes using ScalarParameterValues
 		example:
@@ -467,6 +514,10 @@ Usage
 	uevrUtils.getTargetLocation(originPosition, originDirection, collisionChannel, ignoreActors, traceComplex, minHitDistance) - performs a line trace from origin in direction and returns hit location
 		example:
 			local hitLocation = uevrUtils.getTargetLocation(startPos, forwardVec, 0, {}, false, 10)
+			
+	uevrUtils.getLineTraceHitResult(originPosition, originDirection, collisionChannel, traceComplex, ignoreActors, minHitDistance, maxTraceDistance, includeFullDetails) - performs a line trace from origin in direction and returns detailed hit result information
+		example:
+			local hitResult = uevrUtils.getLineTraceHitResult(startPos, forwardVec, 0, false, {}, 10, 1000, true)
 			
 	uevrUtils.getArrayRange(arr, startIndex, endIndex) - returns a subset of an array from startIndex to endIndex (1-based indexing)
 		example:
@@ -487,6 +538,22 @@ Usage
 	uevrUtils.getObjectFromDescriptor(descriptor, showDebug) - gets object using hierarchy descriptor string
 		example:
 			local glove = uevrUtils.getObjectFromDescriptor("Pawn.Mesh(Arm).Glove", false)
+
+	uevrUtils.getPropertiesOfClass(object, className, excludeInherited) - returns a list of property names (strings) on the object that match 
+		the specified className. If excludeInherited is true, only checks the object's immediate class, not parent classes.
+		example:
+			local meshProps = uevrUtils.getPropertiesOfClass(pawn, "Class /Script/Engine.SkeletalMeshComponent", false)
+			-- Returns: {"Mesh", "FirstPersonMesh", "WeaponMesh"}
+			local immediateOnly = uevrUtils.getPropertiesOfClass(pawn, "Class /Script/Engine.SkeletalMeshComponent", true)
+			-- Returns only properties defined on pawn's class, not inherited ones
+			
+	uevrUtils.getObjectPropertyDescriptors(object, objName, className, includeChildren) - returns a list of property descriptor strings for all properties 
+		of the specified className found on the object. If includeChildren is true, also includes attached children of the same class type.
+		example:
+			local meshProperties = uevrUtils.getObjectPropertyDescriptors(pawn, "Pawn", "Class /Script/Engine.SkeletalMeshComponent", false)
+			-- Returns: {"Pawn.Mesh", "Pawn.FirstPersonMesh"}
+			local withChildren = uevrUtils.getObjectPropertyDescriptors(pawn, "Pawn", "Class /Script/Engine.SkeletalMeshComponent", true)
+			-- Returns: {"Pawn.Mesh", "Pawn.Mesh(ChildMesh_123)", "Pawn.FirstPersonMesh"}
 			
 	uevrUtils.getControllerIndex(controllerID) - gets VR controller index (0=left, 1=right, 2=HMD)
 		example:
@@ -684,6 +751,15 @@ Usage
 		function on_level_change(level, levelName)
 		end
 
+		-- function that gets called when the client restarts or changes pawns
+		-- When the playerController changes pawns (e.g. respawn, death, entering a controllable vehicle), this function is called.
+		-- In your code just add a callback like this:
+		-- function on_client_restart(newPawn)
+		-- 		uevrUtils.print("Pawn changed to " .. newPawn:get_full_name())
+		-- end
+		function on_client_restart(newPawn)
+		end
+
 		-- function that gets called when this library has finished initializing
 		function UEVRReady(instance)
 		end
@@ -739,6 +815,7 @@ pawn = nil -- updated every tick
 ---@field [any] any
 Statics = nil
 WidgetBlueprintLibrary = nil
+WidgetLayoutLibrary = nil
 ---@class kismet_system_library
 ---@field [any] any
 kismet_system_library = nil
@@ -779,91 +856,91 @@ KeyName = {
 	MiddleMouseButton = "MiddleMouseButton",
 	ThumbMouseButton = "ThumbMouseButton",
 	ThumbMouseButton2 = "ThumbMouseButton2",
-	
+
 	-- Mouse axes
 	MouseX = "MouseX",
 	MouseY = "MouseY",
 	MouseScrollUp = "MouseScrollUp",
 	MouseScrollDown = "MouseScrollDown",
 	MouseWheelSpin = "MouseWheelSpin",
-	
+
 	-- Letters
 	A = "A", B = "B", C = "C", D = "D", E = "E", F = "F", G = "G", H = "H", I = "I", J = "J",
 	K = "K", L = "L", M = "M", N = "N", O = "O", P = "P", Q = "Q", R = "R", S = "S", T = "T",
 	U = "U", V = "V", W = "W", X = "X", Y = "Y", Z = "Z",
-	
+
 	-- Numbers (above alphabet)
 	Zero = "Zero", One = "One", Two = "Two", Three = "Three", Four = "Four",
 	Five = "Five", Six = "Six", Seven = "Seven", Eight = "Eight", Nine = "Nine",
-	
+
 	-- Arrow keys
 	Left = "Left", Up = "Up", Right = "Right", Down = "Down",
-	
+
 	-- NumPad
 	NumPadZero = "NumPadZero", NumPadOne = "NumPadOne", NumPadTwo = "NumPadTwo", NumPadThree = "NumPadThree",
 	NumPadFour = "NumPadFour", NumPadFive = "NumPadFive", NumPadSix = "NumPadSix", NumPadSeven = "NumPadSeven",
 	NumPadEight = "NumPadEight", NumPadNine = "NumPadNine",
-	
+
 	-- NumPad operators
 	Multiply = "Multiply", Add = "Add", Subtract = "Subtract", Decimal = "Decimal", Divide = "Divide",
-	
+
 	-- Control keys
 	BackSpace = "BackSpace", Tab = "Tab", Enter = "Enter", Pause = "Pause", NumLock = "NumLock",
 	ScrollLock = "ScrollLock", CapsLock = "CapsLock", Escape = "Escape", SpaceBar = "SpaceBar",
 	PageUp = "PageUp", PageDown = "PageDown", End = "End", Home = "Home", Insert = "Insert", Delete = "Delete",
-	
+
 	-- Function keys
 	F1 = "F1", F2 = "F2", F3 = "F3", F4 = "F4", F5 = "F5", F6 = "F6",
 	F7 = "F7", F8 = "F8", F9 = "F9", F10 = "F10", F11 = "F11", F12 = "F12",
-	
+
 	-- Modifier keys
 	LeftShift = "LeftShift", RightShift = "RightShift", LeftControl = "LeftControl", RightControl = "RightControl",
 	LeftAlt = "LeftAlt", RightAlt = "RightAlt", LeftCommand = "LeftCommand", RightCommand = "RightCommand",
-	
+
 	-- Symbols
 	Semicolon = "Semicolon", Equals = "Equals", Comma = "Comma", Underscore = "Underscore",
 	Period = "Period", Slash = "Slash", Tilde = "Tilde", LeftBracket = "LeftBracket",
 	Backslash = "Backslash", RightBracket = "RightBracket", Quote = "Quote",
-	
+
 	-- Gamepad analog sticks
 	Gamepad_LeftX = "Gamepad_LeftX", Gamepad_LeftY = "Gamepad_LeftY",
 	Gamepad_RightX = "Gamepad_RightX", Gamepad_RightY = "Gamepad_RightY",
-	
+
 	-- Gamepad triggers
 	Gamepad_LeftTriggerAxis = "Gamepad_LeftTriggerAxis", Gamepad_RightTriggerAxis = "Gamepad_RightTriggerAxis",
-	
+
 	-- Gamepad stick buttons
 	Gamepad_LeftThumbstick = "Gamepad_LeftThumbstick", Gamepad_RightThumbstick = "Gamepad_RightThumbstick",
-	
+
 	-- Gamepad special buttons
 	Gamepad_Special_Left = "Gamepad_Special_Left", Gamepad_Special_Right = "Gamepad_Special_Right",
-	
+
 	-- Gamepad face buttons
 	Gamepad_FaceButton_Bottom = "Gamepad_FaceButton_Bottom", Gamepad_FaceButton_Right = "Gamepad_FaceButton_Right",
 	Gamepad_FaceButton_Left = "Gamepad_FaceButton_Left", Gamepad_FaceButton_Top = "Gamepad_FaceButton_Top",
-	
+
 	-- Gamepad shoulder buttons
 	Gamepad_LeftShoulder = "Gamepad_LeftShoulder", Gamepad_RightShoulder = "Gamepad_RightShoulder",
 	Gamepad_LeftTrigger = "Gamepad_LeftTrigger", Gamepad_RightTrigger = "Gamepad_RightTrigger",
-	
+
 	-- Gamepad D-Pad
 	Gamepad_DPad_Up = "Gamepad_DPad_Up", Gamepad_DPad_Down = "Gamepad_DPad_Down",
 	Gamepad_DPad_Right = "Gamepad_DPad_Right", Gamepad_DPad_Left = "Gamepad_DPad_Left",
-	
+
 	-- Gamepad virtual stick directions
 	Gamepad_LeftStick_Up = "Gamepad_LeftStick_Up", Gamepad_LeftStick_Down = "Gamepad_LeftStick_Down",
 	Gamepad_LeftStick_Right = "Gamepad_LeftStick_Right", Gamepad_LeftStick_Left = "Gamepad_LeftStick_Left",
 	Gamepad_RightStick_Up = "Gamepad_RightStick_Up", Gamepad_RightStick_Down = "Gamepad_RightStick_Down",
 	Gamepad_RightStick_Right = "Gamepad_RightStick_Right", Gamepad_RightStick_Left = "Gamepad_RightStick_Left",
-	
+
 	-- Touch device motion
 	Tilt = "Tilt", RotationRate = "RotationRate", Gravity = "Gravity", Acceleration = "Acceleration",
-	
+
 	-- Touch device gestures
 	Gesture_SwipeLeftRight = "Gesture_SwipeLeftRight", Gesture_SwipeUpDown = "Gesture_SwipeUpDown",
 	Gesture_TwoFingerSwipeLeftRight = "Gesture_TwoFingerSwipeLeftRight", Gesture_TwoFingerSwipeUpDown = "Gesture_TwoFingerSwipeUpDown",
 	Gesture_Pinch = "Gesture_Pinch", Gesture_Flick = "Gesture_Flick",
-	
+
 	-- Special
 	PS4_Special = "PS4_Special"
 }
@@ -946,10 +1023,20 @@ end
 
 local timerList = {}
 function setInterval(msec, func)
-	table.insert(timerList, {period = msec/1000, countDown = msec/1000, func = func})
+	local id = M.guid()
+	table.insert(timerList, {id = id,period = msec/1000, countDown = msec/1000, func = func})
+	return id
 end
 function M.setInterval(msec, func)
-	setInterval(msec, func)
+	return setInterval(msec, func)
+end
+function M.clearInterval(id)
+	for i = #timerList, 1, -1 do
+		if timerList[i].id == id then
+			table.remove(timerList, i)
+			break
+		end
+	end
 end
 
 local function updateTimer(delta)
@@ -960,6 +1047,92 @@ local function updateTimer(delta)
 				timerList[i]["func"]()
 			end
 			timerList[i]["countDown"] = timerList[i]["countDown"] + timerList[i]["period"]
+		end
+	end
+end
+
+-- Named deferral system with auto-reset functionality
+local namedDeferrals = {}
+
+local function validateDeferralName(name, funcName)
+	if not name or type(name) ~= "string" then
+		M.print(funcName .. ": invalid deferral name", LogLevel.Error)
+		return false
+	end
+	return true
+end
+
+local function getDeferral(name, funcName)
+	if not validateDeferralName(name, funcName) then return nil end
+
+	local deferral = namedDeferrals[name]
+	if not deferral then
+		M.print(funcName .. ": deferral '" .. name .. "' does not exist", LogLevel.Error)
+		return nil
+	end
+	return deferral
+end
+
+function M.createDeferral(name, timeoutMs, callback)
+	if not validateDeferralName(name, "createDeferral") then return false end
+	if not timeoutMs or type(timeoutMs) ~= "number" or timeoutMs <= 0 then
+		M.print("createDeferral: invalid timeout value", LogLevel.Error)
+		return false
+	end
+
+	namedDeferrals[name] = {
+		isLocked = false,  -- Deferral starts inactive
+		timeout = timeoutMs / 1000,  -- convert to seconds
+		countdown = timeoutMs / 1000,
+		callback = callback
+	}
+
+	M.print("Created deferral '" .. name .. "' with " .. timeoutMs .. "ms timeout", LogLevel.Debug)
+	return true
+end
+
+function M.updateDeferral(name)
+	local deferral = getDeferral(name, "updateDeferral")
+	if not deferral then return false end
+
+	-- Activate the deferral
+	deferral.isLocked = true
+	deferral.countdown = deferral.timeout  -- Reset countdown to full timeout
+
+	--M.print("Deferral '" .. name .. "' activated", LogLevel.Debug)
+	return true
+end
+
+function M.destroyDeferral(name)
+	if not validateDeferralName(name, "destroyDeferral") then return false end
+
+	if namedDeferrals[name] then
+		namedDeferrals[name] = nil
+		M.print("Deferral '" .. name .. "' destroyed", LogLevel.Debug)
+		return true
+	end
+
+	return false
+end
+
+local function updateDeferrals(delta)
+	for name, deferral in pairs(namedDeferrals) do
+		if deferral.isLocked then  -- Only update active deferrals
+			deferral.countdown = deferral.countdown - delta
+
+			if deferral.countdown <= 0 then
+				deferral.isLocked = false
+				deferral.countdown = 0
+
+				if deferral.callback then
+					local success, err = pcall(deferral.callback)
+					if not success then
+						M.print("Deferral '" .. name .. "' callback error: " .. tostring(err), LogLevel.Error)
+					end
+				end
+
+				--M.print("Deferral '" .. name .. "' expired", LogLevel.Debug)
+			end
 		end
 	end
 end
@@ -1180,7 +1353,9 @@ local function hasUEVRCallbacks(callbackName)
 	end
 	return false
 end
-
+function M.hasUEVRCallbacks(callbackName)
+	return hasUEVRCallbacks(callbackName)
+end
 
 local function getCurrentLevel()
 	local world = M.get_world()
@@ -1218,12 +1393,12 @@ local function updateGamePaused()
 			m_isPaused = Statics:IsGamePaused(world)
 		end
 		if isPaused ~= m_isPaused then
+			isPaused = m_isPaused
 			if on_game_paused ~= nil then
-				on_game_paused(m_isPaused)
+				on_game_paused(isPaused)
 			end
-			executeUEVRCallbacks("on_game_paused", m_isPaused)
+			executeUEVRCallbacks("on_game_paused", isPaused)
 		end
-		isPaused = m_isPaused
 	end
 end
 
@@ -1231,13 +1406,13 @@ local function updateCharacterHidden()
 	if on_character_hidden ~= nil or hasUEVRCallbacks("on_character_hidden") then --don't bother doing anything if nothing is listening
 		local m_isHidden = M.getValid(pawn, {"Controller", "Character", "bHidden"}) or false
 		if isCharacterHidden ~= m_isHidden then
-			if on_character_hidden ~= nil then
-				on_character_hidden(m_isHidden)
-			end
-			executeUEVRCallbacks("on_character_hidden", m_isHidden)
-		end
 ---@diagnostic disable-next-line: cast-local-type
-		isCharacterHidden = m_isHidden
+			isCharacterHidden = m_isHidden
+			if on_character_hidden ~= nil then
+				on_character_hidden(isCharacterHidden)
+			end
+			executeUEVRCallbacks("on_character_hidden", isCharacterHidden)
+		end
 	end
 end
 
@@ -1249,25 +1424,24 @@ local function updateCutscene()
 				local cameraManager = playerController.PlayerCameraManager
 				if cameraManager ~= nil then
 					local target = cameraManager.ViewTarget.Target
---print(target:get_class():get_full_name())
 					local m_isInCutscene = false
 					if target ~= nil then
 						if target:is_a(M.get_class("Class /Script/CinematicCamera.CineCameraActor")) then
 							m_isInCutscene = true
-							--print("In Cinematic")
 						elseif target.ActiveCamera ~= nil and target.ActiveCamera.Camera ~= nil and target.ActiveCamera.Camera:is_a(M.get_class("Class /Script/CinematicCamera.CineCameraComponent")) then
 							m_isInCutscene = true
-							--print("In Cinematic")
+						elseif target.CameraComponent ~= nil and target.CameraComponent:is_a(M.get_class("Class /Script/CinematicCamera.CineCameraComponent")) then
+							m_isInCutscene = true
 						end
 					end
 
 					if isInCutscene ~= m_isInCutscene then
+						isInCutscene = m_isInCutscene
 						if on_cutscene_change ~= nil then
-							on_cutscene_change(m_isInCutscene)
+							on_cutscene_change(isInCutscene)
 						end
-						executeUEVRCallbacks("on_cutscene_change", m_isInCutscene)
+						executeUEVRCallbacks("on_cutscene_change", isInCutscene)
 					end
-					isInCutscene = m_isInCutscene
 				end
 			end
 		end
@@ -1280,13 +1454,13 @@ local function updateMontage()
 		if M.getValid(pawn) ~= nil and pawn.GetCurrentMontage ~= nil then
 			local montage = pawn:GetCurrentMontage()
 			if currentMontage ~= montage then
-				local montageName = montage and M.getShortName(montage) or ""
+				currentMontage = montage
+				local montageName = currentMontage and M.getShortName(currentMontage) or ""
 				if on_montage_change ~= nil then
-					on_montage_change(montage, montageName)
+					on_montage_change(currentMontage, montageName)
 				end
-				executeUEVRCallbacks("on_montage_change", montage, montageName)
+				executeUEVRCallbacks("on_montage_change", currentMontage, montageName)
 			end
-			currentMontage = montage
 		end
 	end
 end
@@ -1297,12 +1471,12 @@ local function updateUEVRUIState()
 	if on_uevr_ui_change ~= nil or hasUEVRCallbacks("on_uevr_ui_change") then --don't bother doing anything if nothing is listening
 		local uiDrawn = uevr.params.functions.is_drawing_ui()
 		if currentUEVRDrawn ~= uiDrawn then
+			currentUEVRDrawn = uiDrawn
 			if on_uevr_ui_change ~= nil then
-				on_uevr_ui_change(uiDrawn)
+				on_uevr_ui_change(currentUEVRDrawn)
 			end
-			executeUEVRCallbacks("on_uevr_ui_change", uiDrawn)
+			executeUEVRCallbacks("on_uevr_ui_change", currentUEVRDrawn)
 		end
-		currentUEVRDrawn = uiDrawn
 	end
 end
 
@@ -1338,6 +1512,8 @@ function M.initUEVR(UEVR, callbackFunc)
 	kismet_rendering_library = M.find_default_instance("Class /Script/Engine.KismetRenderingLibrary")
 	Statics = M.find_default_instance("Class /Script/Engine.GameplayStatics")
 	WidgetBlueprintLibrary = M.find_default_instance("Class /Script/UMG.WidgetBlueprintLibrary")
+    WidgetLayoutLibrary = M.find_default_instance("Class /Script/UMG.WidgetLayoutLibrary")
+    
 
 	game_engine = M.find_first_of("Class /Script/Engine.GameEngine")
 
@@ -1379,16 +1555,17 @@ function M.initUEVR(UEVR, callbackFunc)
 			executeUEVRCallbacks("postCalculateStereoView", device, view_index, world_to_meters, position, rotation, is_double)
 		end)
 		if success == false then
-			M.print("[on_pre_engine_tick] " .. response, LogLevel.Error)
+			M.print("[on_post_calculate_stereo_view_offset] " .. response, LogLevel.Error)
 		end
 	end)
 
 	uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
-		local success, response = pcall(function()
+		--local success, response = pcall(function()
 			pawn = uevr.api:get_local_pawn(0)
 			updateCurrentLevel()
 			updateDelay(delta)
 			updateTimer(delta)
+			updateDeferrals(delta)
 			updateLazyPoll(delta)
 			updateKeyPress()
 			updateLerp(delta)
@@ -1403,10 +1580,10 @@ function M.initUEVR(UEVR, callbackFunc)
 			end
 
 			executeUEVRCallbacks("preEngineTick", engine, delta)
-		end)
-		if success == false then
-			M.print("[on_pre_engine_tick] " .. response, LogLevel.Error)
-		end
+		-- end)
+		-- if success == false then
+		-- 	M.print("[on_pre_engine_tick] " .. response, LogLevel.Error)
+		-- end
 	end)
 
 	uevr.sdk.callbacks.on_post_engine_tick(function(engine, delta)
@@ -1420,6 +1597,13 @@ function M.initUEVR(UEVR, callbackFunc)
 	if callbackFunc ~= nil then
 		callbackFunc()
 	end
+
+	-- if on_uevr_ready ~= nil or hasUEVRCallbacks("on_uevr_ready") then --don't bother doing anything if nothing is listening
+	-- 	if on_uevr_ready ~= nil then
+	-- 		on_uevr_ready(uevr)
+	-- 	end
+	-- 	executeUEVRCallbacks("on_uevr_ready", uevr)
+	-- end
 
 	if UEVRReady ~= nil then UEVRReady(uevr) end
 end
@@ -1534,6 +1718,14 @@ end
 
 function M.getHandedness()
 	return handedness
+end
+
+function M.guid()
+    local template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+    return string.gsub(template, '[xy]', function (c)
+        local v = (c == 'x') and math.random(0, 0xf) or math.random(8, 0xb)
+        return string.format('%x', v)
+    end)
 end
 
 function vector_2(x, y, reuseable)
@@ -1663,14 +1855,19 @@ function M.rotator(...)
 		end
 	end
 
-	-- local rotator = M.get_struct_object("ScriptStruct /Script/CoreUObject.Rotator", reuseable)
-	-- if rotator ~= nil then
-		-- if rotator["Pitch"] ~= nil then rotator.Pitch = pitch else rotator.pitch = pitch end
-		-- if rotator["Yaw"] ~= nil then rotator.Yaw = yaw else rotator.yaw = yaw end
-		-- if rotator["Roll"] ~= nil then rotator.Roll = roll else rotator.roll = roll end
-	-- end
-	-- return rotator
-	return kismet_math_library:MakeRotator(roll, pitch, yaw)
+	if kismet_math_library.MakeRotator ~= nil then
+		return kismet_math_library:MakeRotator(roll, pitch, yaw)
+	end
+
+	local rotator = M.get_struct_object("ScriptStruct /Script/CoreUObject.Rotator", reuseable)
+	if rotator ~= nil then
+		if rotator["Pitch"] ~= nil then rotator.Pitch = pitch else rotator.pitch = pitch end
+		if rotator["Yaw"] ~= nil then rotator.Yaw = yaw else rotator.yaw = yaw end
+		if rotator["Roll"] ~= nil then rotator.Roll = roll else rotator.roll = roll end
+	else
+		rotator = {Pitch = pitch, Yaw = yaw, Roll = roll}
+	end
+	return rotator
 end
 
 function M.vector2D(...)
@@ -1762,6 +1959,13 @@ function M.quat(x, y, z, w, reuseable)
 	return quat
 end
 
+function M.rotateVector(vector, rotator)
+	return kismet_math_library:Quat_RotateVector(kismet_math_library:Quat_MakeFromEuler(M.vector(rotator.Roll, rotator.Pitch, rotator.Yaw)), vector)
+end
+
+function M.vectorDistance(vector1, vector2)
+	return kismet_math_library:Vector_Distance(vector1, vector2)
+end
 -- function M.sumRotators(...) --BreakRotator doesnt work in robocop UB
     -- local arg = {...}
 	-- local rollTotal,pitchTotal,yawTotal = 0,0,0
@@ -1823,7 +2027,7 @@ end
 
 function M.set_component_relative_rotation(component, rotation)
 	if component ~= nil and component.RelativeRotation ~= nil then
-		if rotation == nil then rotation = {Pitch=0, Yaw=0, Roll=0} else rotation = M.rotator(rotation)  end
+		if rotation == nil then rotation = {Pitch=0, Yaw=0, Roll=0} else rotation = M.rotator(rotation) end
 		component.RelativeRotation.Pitch = rotation.Pitch
 		component.RelativeRotation.Yaw = rotation.Yaw
 		component.RelativeRotation.Roll = rotation.Roll
@@ -1956,12 +2160,37 @@ function M.get_struct_object(structClassName, reuseable)
 	return nil
 end
 
+function M.pauseGame(value)
+	Statics:SetGamePaused(M.get_world(), value)
+end
+
 function M.isGamePaused()
 	return isPaused
 end
 
+function M.getMatchState()
+	local world = M.get_world()
+	if world ~= nil then
+		local gameState = world.GameState
+		if gameState ~= nil and gameState.MatchState ~= nil then
+			return gameState.MatchState:to_string()
+		end
+	end
+	return ""
+end
+
 function M.isInCutscene()
 	return isInCutscene
+end
+
+function M.tagFromString(name)
+	local tag = M.get_reuseable_struct_object("ScriptStruct /Script/GameplayTags.GameplayTag")
+    tag.TagName = M.fname_from_string(name)
+	return tag
+end
+
+function M.stringFromTag(tag)
+	return tag and tag.TagName and tag.TagName:to_string() or ""
 end
 
 function M.get_world()
@@ -2147,7 +2376,7 @@ end
 function M.find_required_object(name)
     local obj = uevr.api:find_uobject(name)
     if not obj then
-        error("Cannot find " .. name)
+        M.print("Cannot find " .. name)
         return nil
     end
 
@@ -2156,8 +2385,17 @@ end
 
 --uses caching
 function M.get_class(name, clearCache)
+	if name == nil then return nil end
 	if clearCache or classCache[name] == nil then
-		classCache[name] = uevr.api:find_uobject(name)
+		local ok, result = pcall(function()
+			return uevr.api:find_uobject(name)
+		end)
+		if not ok then
+			print("[uevr_utils] Error finding class in get_class handled properly", name, result)
+			return nil
+		end
+		classCache[name] = result
+		--classCache[name] = uevr.api:find_uobject(name)
 	end
     return classCache[name]
 end
@@ -2180,7 +2418,7 @@ end
 
 function M.find_all_instances(className, includeDefault)
 	local class =  M.get_class(className)
-	if class ~= nil and class.get_first_object_matching ~= nil then
+	if class ~= nil and class.get_objects_matching ~= nil then
 		return class:get_objects_matching(includeDefault)
 	end
 	return nil
@@ -2314,6 +2552,27 @@ function M.intToHexString(num)
 	return string.format("#%02X%02X%02X%02X", r, g, b, a)
 end
 
+function M.indexOf(array, value)
+    -- Iterate through the array using ipairs
+    for i, v in ipairs(array) do
+        if v == value then
+            return i -- Return the index immediately when the value is found
+        end
+    end
+    return nil -- Return nil if the value is not found after checking all elements
+end
+
+function M.deepCopyTable(orig)
+    local copy = {}
+    for k, v in pairs(orig) do
+        if type(v) == "table" then
+            copy[k] = M.deepCopyTable(v)  -- Recurse for nested tables
+        else
+            copy[k] = v
+        end
+    end
+    return copy
+end
 
 function M.splitStr(inputstr, sep)
    	if sep == nil then
@@ -2329,6 +2588,78 @@ function M.splitStr(inputstr, sep)
    	return t
 end
 
+function M.getArrayFromVector2(vec)
+	if vec == nil then
+		return {0,0}
+	end
+	return {vec.x, vec.y}
+end
+
+function M.getArrayFromVector3(vec)
+	if vec == nil then
+		return {0,0,0}
+	end
+	return {vec.X, vec.Y, vec.Z}
+end
+
+function M.getArrayFromVector4(vec)
+	if vec == nil then
+		return {0, 0, 0, 0}
+	end
+	return {vec.X, vec.Y, vec.Z, vec.W}
+end
+
+--convert userdata types to native lua types for json saving
+function M.getNativeValue(val, useTable)
+	local returnValue = val
+	if type(val) == "userdata" then
+---@diagnostic disable-next-line: undefined-field
+		if val.x ~= nil and val.y ~= nil and val.z == nil and val.w == nil then
+			returnValue = M.getArrayFromVector2(val)
+			if useTable == true then
+				returnValue = {X=returnValue[1], Y=returnValue[2]}
+			end
+---@diagnostic disable-next-line: undefined-field
+		elseif val.x ~= nil and val.y ~= nil and val.z ~= nil and val.w == nil then
+			returnValue = M.getArrayFromVector3(val)
+			if useTable == true then
+				returnValue = {X=returnValue[1], Y=returnValue[2], Z=returnValue[3]}
+			end
+---@diagnostic disable-next-line: undefined-field
+		elseif val.x ~= nil and val.y ~= nil and val.z ~= nil and val.w ~= nil then
+			returnValue = M.getArrayFromVector4(val)
+			if useTable == true then
+				returnValue = {X=returnValue[1], Y=returnValue[2], Z=returnValue[3], W=returnValue[4]}
+			end
+		end
+	end
+	return returnValue
+end
+
+function M.tableToString(tbl, indent)
+	if not indent then indent = 0 end
+	local toprint = string.rep(" ", indent) .. "{\n"
+	indent = indent + 2 
+	for k, v in pairs(tbl) do
+		toprint = toprint .. string.rep(" ", indent)
+		if type(k) == "number" then
+			toprint = toprint .. "[" .. k .. "] = "
+		elseif type(k) == "string" then
+			toprint = toprint  .. k ..  " = "
+		end
+		if type(v) == "number" then
+			toprint = toprint .. v .. ",\n"
+		elseif type(v) == "string" then
+			toprint = toprint .. "\"" .. v .. "\",\n"
+		elseif type(v) == "table" then
+			toprint = toprint .. M.tableToString(v, indent + 2) .. ",\n"
+		else
+			toprint = toprint .. "\"" .. tostring(v) .. "\",\n"
+		end
+	end
+	toprint = toprint .. string.rep(" ", indent - 2) .. "}"
+	return toprint
+end
 
 function M.isButtonPressed(state, button)
     return state.Gamepad.wButtons & button ~= 0
@@ -2486,6 +2817,10 @@ function M.set_decoupled_pitch(state)
 	uevr.params.vr.set_mod_value("VR_DecoupledPitch", state and "true" or "false")
 end
 
+function M.set_rendering_method(value)
+	uevr.params.vr.set_mod_value("VR_RenderingMethod", value)
+end
+
 function M.get_decoupled_pitch()
 	local mode = uevr.params.vr:get_mod_value("VR_DecoupledPitch")
 	if string.sub(mode, 1, 4 ) == "true" then
@@ -2557,7 +2892,9 @@ function M.getAssetDataFromPath(pathStr)
 		fAssetData.AssetName = M.fname_from_string(arr2[2])
 		local packagePath = table.concat(arr, "/", 1, #arr - 1)
 		fAssetData.PackagePath = "/" .. packagePath
-		fAssetData.PackageName = "/" .. packagePath .. "/" .. arr2[1]
+		if arr2[1] ~= nil then
+			fAssetData.PackageName = "/" .. packagePath .. "/" .. arr2[1]
+		end
 	end
 	return fAssetData
 end
@@ -2582,7 +2919,8 @@ function M.copyMaterials(fromComponent, toComponent, showDebug)
 			if showDebug == true then M.print("Copying materials. Found " .. #materials .. " materials on fromComponent") end
 			for i = 1 , #materials do
 				toComponent:SetMaterial(i - 1, materials[i])
-				if showDebug == true then M.print("Material index " .. i .. ": " .. materials[i]:get_full_name()) end
+				--print statement can cause crash
+				--if showDebug == true then M.print("Material index " .. i .. ": " .. materials[i]:get_full_name()) end
 			end
 		end
 	end
@@ -2596,6 +2934,7 @@ function M.getChildComponent(parent, name)
 			for i, child in ipairs(children) do
 				if  string.find(child:get_full_name(), name) then
 					childComponent = child
+					break
 				end
 			end
 		end
@@ -2633,16 +2972,18 @@ function M.getPropertiesOfClass(object, className, excludeInherited)
 	return propertiesList
 end
 
-function M.getPropertyPathDescriptorsOfClass(object, objectName, className, includeChildren)
-	local meshList = {}
+--example get all camera properties of the pawn
+--local cameraList = uevrUtils.getObjectPropertyDescriptors(pawn, "Pawn", "Class /Script/Engine.CameraComponent", true)
+function M.getObjectPropertyDescriptors(object, objName, className, includeChildren)
+	local propertyList = {}
 	if M.getValid(object) ~= nil then
-		meshList = M.getPropertiesOfClass(object, className)
-		for index, name in ipairs(meshList) do
-			meshList[index] = objectName .. "." .. meshList[index]
+		propertyList = M.getPropertiesOfClass(object, className)
+		for index, name in ipairs(propertyList) do
+			propertyList[index] = objName .. "." ..propertyList[index]
 		end
 
-		if includeChildren == true then
-			for _, prop in ipairs(meshList) do
+		if includeChildren then
+			for _, prop in ipairs(propertyList) do
 				local parent = M.getObjectFromDescriptor(prop)
 				if parent ~= nil then
 					local children = parent.AttachChildren
@@ -2651,7 +2992,7 @@ function M.getPropertyPathDescriptorsOfClass(object, objectName, className, incl
 							if child:is_a(M.get_class(className)) then
 								local prefix, shortName = M.splitOnLastPeriod(child:get_full_name())
 								if shortName ~= nil then
-									table.insert(meshList, prop .. "(" .. shortName .. ")")
+									table.insert(propertyList, prop .. "(" .. shortName .. ")")
 								end
 							end
 						end
@@ -2660,7 +3001,7 @@ function M.getPropertyPathDescriptorsOfClass(object, objectName, className, incl
 			end
 		end
 	end
-	return meshList
+    return propertyList
 end
 
 function M.destroyComponent(component, destroyOwner, destroyChildren)
@@ -2682,24 +3023,26 @@ function M.destroyComponent(component, destroyOwner, destroyChildren)
 			end
 
 			M.print("[destroyComponent] Getting component owner for " ..  name)
-			local actor = component:GetOwner()
-			if actor ~= nil then
-				local actorName = actor:get_full_name()
-				M.print("[destroyComponent] Found component owner " .. actorName)
-				if actor.K2_DestroyComponent ~= nil then
-					actor:K2_DestroyComponent(component)
-					M.print("[destroyComponent] Destroyed component " .. name)
-				elseif component.K2_DestroyComponent ~= nil then
-					component:K2_DestroyComponent(component)
-					M.print("[destroyComponent] Destroyed component directly " .. name)
+			if component.GetOwner ~= nil then
+				local actor = component:GetOwner()
+				if actor ~= nil then
+					local actorName = actor:get_full_name()
+					M.print("[destroyComponent] Found component owner " .. actorName)
+					if actor.K2_DestroyComponent ~= nil then
+						actor:K2_DestroyComponent(component)
+						M.print("[destroyComponent] Destroyed component " .. name)
+					elseif component.K2_DestroyComponent ~= nil then
+						component:K2_DestroyComponent(component)
+						M.print("[destroyComponent] Destroyed component directly " .. name)
+					end
+					if destroyOwner == nil then destroyOwner = false end
+					if destroyOwner then
+						actor:K2_DestroyActor()
+						M.print("[destroyComponent] Destroyed component owner " .. actorName .. " for " .. name)
+					end
+				else
+					M.print("[destroyComponent] Component owner not found")
 				end
-				if destroyOwner == nil then destroyOwner = false end
-				if destroyOwner then
-					actor:K2_DestroyActor()
-					M.print("[destroyComponent] Destroyed component owner " .. actorName .. " for " .. name)
-				end
-			else
-				M.print("[destroyComponent] Component owner not found")
 			end
 		end)
 		if success == false then
@@ -2726,7 +3069,7 @@ function M.createPoseableMeshFromSkeletalMesh(skeletalMeshComponent, options)
 	if showDebug == true then M.print("Creating PoseableMeshComponent from " .. skeletalMeshComponent:get_full_name()) end
 	local poseableComponent = nil
 	if skeletalMeshComponent ~= nil then
-		if skeletalMeshComponent:is_a(M.get_class("Class /Script/Engine.SkeletalMeshComponent")) then
+		if skeletalMeshComponent:is_a(M.get_class("Class /Script/Engine.SkeletalMeshComponent")) or skeletalMeshComponent:is_a(M.get_class("Class /Script/Engine.PoseableMeshComponent")) then
 			poseableComponent = M.create_component_of_class("Class /Script/Engine.PoseableMeshComponent", options.manualAttachment, options.relativeTransform, options.deferredFinish, options.parent, options.tag)
 			--poseableComponent:SetCollisionEnabled(0, false)
 			if poseableComponent ~= nil then
@@ -2747,7 +3090,7 @@ function M.createPoseableMeshFromSkeletalMesh(skeletalMeshComponent, options)
 					-- of the source skeletalmeshcomponent and apply them to the poseablemeshcomponent
 					-- For example if your source is gripping a gun then the copy will also be gripping
 					-- If you do not want this and just want the default skeleton then set options.useDefaultPose to true
-					if options.useDefaultPose ~= true then
+					if options.useDefaultPose ~= true and skeletalMeshComponent:is_a(M.get_class("Class /Script/Engine.SkeletalMeshComponent")) then
 						poseableComponent:CopyPoseFromSkeletalComponent(skeletalMeshComponent)
 						if showDebug == true then M.print("Pose copied") end
 					end
@@ -2924,10 +3267,24 @@ end
 function M.createWidgetComponent(widget, options)
 	local component = nil
 	local widgetAlignment = nil
+	local className = nil
 	if widget ~= nil and (type(widget) == "string" or widget:is_a(M.get_class("Class /Script/UMG.Widget"))) then
 		if type(widget) == "string" then
+			className = widget
 			widget = M.getActiveWidgetByClass(widget)
 		end
+		-- if type(widget) == "string" then
+		-- 	className = widget
+		-- 	local ok, result = pcall(function()
+		-- 		return M.getActiveWidgetByClass(widget)
+		-- 	end)
+		-- 	widget = result
+		-- 	if not ok then
+		-- 		print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@Error in createWidgetComponent: ", className, type(className))
+		-- 		widget = nil
+		-- 	end
+		-- end
+
 		if M.getValid(widget) ~= nil then
 			widgetAlignment = widget:GetAlignmentInViewport()
 			component = M.create_component_of_class("Class /Script/UMG.WidgetComponent", options.manualAttachment, options.relativeTransform, options.deferredFinish, options.parent, options.tag)
@@ -2949,6 +3306,8 @@ function M.createWidgetComponent(widget, options)
 				M.print("WidgetComponent creation failed")
 			end
 		else
+			--Temporary hack for Unreal Engine 5.5+ returning invalid classes for a few seconds after level change
+			if className ~= nil then classCache[className] = nil end
 			M.print("WidgetComponent not created because widget could not be created")
 		end
 	else
@@ -2956,6 +3315,28 @@ function M.createWidgetComponent(widget, options)
 	end
 	return component, widgetAlignment
 end
+
+function M.setWidgetLayout(widget, scale, alignment)
+    if widget ~= nil and WidgetLayoutLibrary ~= nil then
+        if scale ~= nil then
+            scale = M.vector2D(scale)
+            if scale ~= nil then
+                local viewportSize = WidgetLayoutLibrary:GetViewportSize(M.get_world())
+                local viewportScale = WidgetLayoutLibrary:GetViewportScale(M.get_world())
+                local newSizeX = viewportSize.X * scale.X / viewportScale
+                local newSizeY = viewportSize.Y * scale.Y / viewportScale
+                widget:SetDesiredSizeInViewport(M.vector2D(newSizeX, newSizeY))
+            end
+        end
+        if alignment ~= nil then
+            alignment = M.vector2D(alignment)
+            if alignment ~= nil then
+                widget:SetAlignmentInViewport(M.vector2D(-alignment.X, -alignment.Y))
+            end
+        end
+    end
+end
+
 
 function M.fixMeshFOV(mesh, propertyName, value, includeChildren, includeNiagara, showDebug)
 	local logLevel = showDebug == true and LogLevel.Debug or LogLevel.Ignore
@@ -3044,23 +3425,106 @@ function M.cloneComponent(component, options)
 	return clone
 end
 
-function M.getTargetLocation(originPosition, originDirection, collisionChannel, ignoreActors, traceComplex, minHitDistance)
+--courtesy of lobotomy
+function M.getCleanHitResult(hitResult)
+	if hitResult ~= nil then
+		local bBlockingHit = {}
+		local bInitialOverlap = {}
+		local Time = {}
+		local Distance = {}
+		local Location = {}
+		local ImpactPoint = {}
+		local Normal = {}
+		local ImpactNormal = {}
+		local PhysMat = {}
+		local HitActor = {}
+		local HitComponent = {}
+		local HitBoneName = {}
+		local HitItem = {}
+		local ElementIndex = {}
+		local FaceIndex = {}
+		local TraceStart = {}
+		local TraceEnd = {}
+		Statics:BreakHitResult(hitResult, bBlockingHit, bInitialOverlap, Time, Distance, Location, ImpactPoint, Normal, ImpactNormal, PhysMat, HitActor, HitComponent, HitBoneName, HitItem, ElementIndex, FaceIndex, TraceStart, TraceEnd )
+
+		local details = {}
+		details.FaceIndex = hitResult.FaceIndex
+		details.Time = hitResult.Time
+		details.Distance = hitResult.Distance
+		details.Location = M.vector(hitResult.Location)
+		details.ImpactPoint = M.vector(hitResult.ImpactPoint)
+		details.Normal = M.vector(hitResult.Normal)
+		details.ImpactNormal = M.vector(hitResult.ImpactNormal)
+		details.TraceStart = M.vector(hitResult.TraceStart)
+		details.TraceEnd = M.vector(hitResult.TraceEnd)
+		details.PenetrationDepth = hitResult.PenetrationDepth
+		details.Item = hitResult.Item
+		details.ElementIndex = hitResult.ElementIndex
+		details.bBlockingHit = hitResult.bBlockingHit
+		details.bStartPenetrating = hitResult.bStartPenetrating
+		details.PhysMaterial = PhysMat.result
+		details.Actor = HitActor.result
+		details.Component = HitComponent.result
+		details.BoneName = HitBoneName.result and HitBoneName.result:to_string() or nil
+		details.MyBoneName = hitResult.MyBoneName and hitResult.MyBoneName:to_string() or nil
+		return details
+	end
+	return nil
+end
+
+function M.getLineTraceHitResult(originPosition, originDirection, collisionChannel, traceComplex, ignoreActors, minHitDistance, maxTraceDistance, includeFullDetails)
 	if originPosition ~= nil and originDirection ~= nil then
-		local endLocation = originPosition + (originDirection * 8192.0)
+		if maxTraceDistance == nil then maxTraceDistance = 8192.0 end
+		local endLocation = originPosition + (originDirection * maxTraceDistance)
 		local ignore_actors = ignoreActors or {}
 		if traceComplex == nil then traceComplex = false end
-		if minHitDistance == nil then minHitDistance = 10 end
+		--if minHitDistance == nil then minHitDistance = 10 end
 		if collisionChannel == nil then collisionChannel = 0 end
 		local world = M.get_world()
 		if world ~= nil then
 			local hit = kismet_system_library:LineTraceSingle(world, originPosition, endLocation, collisionChannel, traceComplex, ignore_actors, 0, reusable_hit_result, true, zero_color, zero_color, 1.0)
-			if hit and reusable_hit_result.Distance > minHitDistance then
-				endLocation = M.vector(reusable_hit_result.Location) --{X=reusable_hit_result.Location.X, Y=reusable_hit_result.Location.Y, Z=reusable_hit_result.Location.Z}
+			local exceedsMinDistance = true
+			if minHitDistance ~= nil then
+				local distance = M.vectorDistance(originPosition, M.vector(reusable_hit_result.Location))
+				exceedsMinDistance = distance >= minHitDistance
+			end
+			--print(collisionChannel, traceComplex, maxTraceDistance, hit, reusable_hit_result.Distance, minHitDistance,reusable_hit_result.Location.X, reusable_hit_result.Location.Y, reusable_hit_result.Location.Z)
+			if hit and exceedsMinDistance then --reusable_hit_result.Distance > minHitDistance then
+				if includeFullDetails == true then
+					return M.getCleanHitResult(reusable_hit_result)
+				end
+				return reusable_hit_result
 			end
 		end
-
-		return endLocation
 	end
+	return nil
+end
+
+
+function M.getTargetLocation(originPosition, originDirection, collisionChannel, ignoreActors, traceComplex, minHitDistance, maxTraceDistance)
+	local hitResult = M.getLineTraceHitResult(originPosition, originDirection, collisionChannel, traceComplex, ignoreActors, minHitDistance, maxTraceDistance)
+	if hitResult ~= nil then
+		--M.executeUEVRCallbacks("on_interaction_hit", M.getCleanHitResult(hitResult))
+		return M.vector(hitResult.Location)
+	end
+	
+
+	-- if originPosition ~= nil and originDirection ~= nil then
+	-- 	local endLocation = originPosition + (originDirection * 8192.0)
+	-- 	local ignore_actors = ignoreActors or {}
+	-- 	if traceComplex == nil then traceComplex = false end
+	-- 	if minHitDistance == nil then minHitDistance = 10 end
+	-- 	if collisionChannel == nil then collisionChannel = 0 end
+	-- 	local world = M.get_world()
+	-- 	if world ~= nil then
+	-- 		local hit = kismet_system_library:LineTraceSingle(world, originPosition, endLocation, collisionChannel, traceComplex, ignore_actors, 0, reusable_hit_result, true, zero_color, zero_color, 1.0)
+	-- 		if hit and reusable_hit_result.Distance > minHitDistance then
+	-- 			endLocation = M.vector(reusable_hit_result.Location) --{X=reusable_hit_result.Location.X, Y=reusable_hit_result.Location.Y, Z=reusable_hit_result.Location.Z}
+	-- 		end
+	-- 	end
+
+	-- 	return endLocation
+	-- end
 	return nil
 end
 
@@ -3105,6 +3569,7 @@ function M.wrapTextOnWordBoundary(text, maxCharsPerLine)
 end
 
 function M.parseHierarchyString(str)
+	--print("[parseHierarchyString] Parsing hierarchy string: " .. tostring(str))
 	if str == nil then str = "" end
     local tokens = {}
     for token in str:gmatch("[^%.]+") do
@@ -3115,9 +3580,12 @@ function M.parseHierarchyString(str)
     local current = nil
 
     for _, token in ipairs(tokens) do
-        local parent, child = token:match("^(%w+)%((%w+)%)$")
+        --local parent, child = token:match("^(%w+)%((%w+)%)$")
+		local parent, child = token:match("^%s*([^%(]+)%s*%(%s*([^%)]+)%s*%)%s*$") --better handling of names with non-word characters
         local node
-
+-- print(string.len(token))
+-- print(#token)
+-- print("[parseHierarchyString] Token: %" .. token .. "% Parent: " .. tostring(parent) .. " Child: " .. tostring(child))
         if parent and child then
             node = { name = parent, child = { name = child } }
         else
@@ -3162,7 +3630,7 @@ function M.getObjectFromHierarchy(node, object, showDebug)
 				if showDebug == true then M.print("[getObjectFromHierarchy] Object not found " .. node.name) end
 				return object
 			end
-			if showDebug == true then M.print("[getObjectFromHierarchy] " .. object:get_full_name()) end
+			if showDebug == true then M.print("[getObjectFromHierarchy] Object found: " .. object:get_full_name()) end
 		end
 		if node.child then
 			if showDebug == true then M.print("[getObjectFromHierarchy] Attached child " .. node.child.name) end
@@ -3257,9 +3725,10 @@ function hook_function(class_name, function_name, native, prefn, postfn, dbgout)
 	if(dbgout) then M.print("[hook_function] " .. class_name .. "   " .. function_name) end
     local result = false
     local class_obj = uevr.api:find_uobject(class_name)
+	local class_fn = nil
     if(class_obj ~= nil) then
         if dbgout then M.print("[hook_function] Found class obj for " .. class_name) end
-        local class_fn = class_obj:find_function(function_name)
+        class_fn = class_obj:find_function(function_name)
         if(class_fn ~= nil) then
             if dbgout then M.print("[hook_function] Found function " .. function_name .. " for " .. class_name) end
             if (native == true) then
@@ -3273,7 +3742,7 @@ function hook_function(class_name, function_name, native, prefn, postfn, dbgout)
         end
     end
     if dbgout then M.print("---") end
-    return result
+    return result, class_fn
 end
 
 -------------------------------------------------------------------------------
@@ -3364,5 +3833,32 @@ end
 
 
 M.initUEVR(uevr)
+
+-- When the playerController changes pawns (e.g. respawn, death, entering a controllable vehicle), this function is called.
+-- We hook it here to notify any listeners providing an easy way for developers to react to pawn changes.
+-- In your code just add a callback like this:
+-- function on_client_restart(newPawn)
+-- 	uevrUtils.print("Pawn changed to " .. newPawn:get_full_name())
+-- end
+hook_function("Class /Script/Engine.PlayerController", "ClientRestart", true, nil,
+	function(fn, obj, locals, result)
+		if on_client_restart ~= nil or hasUEVRCallbacks("on_client_restart") then --don't bother doing anything if nothing is listening
+			if on_client_restart ~= nil then
+				on_client_restart(locals.NewPawn)
+			end
+			executeUEVRCallbacks("on_client_restart", locals.NewPawn)
+		end
+
+	-- print("ClientRestart called", locals, result, locals.NewPawn:get_class():get_full_name(), obj:get_class():get_full_name() )
+	-- if locals.NewPawn ~= nil and locals.NewPawn:get_class():get_full_name() == "BlueprintGeneratedClass /Game/Core/Player/BP_PlayerCharacter.BP_PlayerCharacter_C" then
+	-- 	pawn = locals.NewPawn
+	-- end
+	-- if locals.NewPawn ~= nil and locals.NewPawn:get_class():get_full_name() == "BlueprintGeneratedClass /Game/Development/Vehicles/BP_MoskvichDrivable.BP_MoskvichDrivable_C" then
+	-- 	print("Player in vehicle")
+	-- 	--isInCar = true
+	-- end
+	end
+, true)
+
 
 return M

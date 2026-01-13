@@ -41,6 +41,12 @@ Usage
         example:
             hands.setAutoHandleInput(false)  -- Disable automatic input handling
     
+    hands.setAutoCreateHands(val) - enables/disables automatic creation of hands from configuration
+		Automatic hand creation is enabled by default. If disabled, hands will not be automatically created
+		from hands_parameters.json and you will need to call hands.createFromConfig() manually.
+        example:
+            hands.setAutoCreateHands(false)  -- Disable automatic hand creation
+    
 	hands.handleInput(state, attachment, hand, overrideTrigger) - processes controller input for single hand
 		You only need to call this if you are not using automatic input handling. Call either handleInput or handleInputForHands, not both
         examples:
@@ -136,6 +142,8 @@ local autoHandleInput = true
 local autoCreateHands = true
 local autoCreateConfigName = nil
 local autoCreateAnimationName = nil
+local wereHidden = nil
+
 
 local handComponents = {}
 local handDefinitions = {}
@@ -144,6 +152,7 @@ local offset={X=0, Y=0, Z=0, Pitch=0, Yaw=0, Roll=0}
 local inputHandlerAnimID = {} --list of animID only used for the default input handler
 local handsConfig = nil -- the configuration tool for creating hands in game
 local holdingAttachment = {}
+local disableAnimations = false --used during hand configuration to prevent loaded animation from interfering
 
 --externally controlled animations
 local armsAnimationMeshes = {}
@@ -160,6 +169,27 @@ function M.print(text, logLevel)
 	if logLevel <= currentLogLevel then
 		uevrUtils.print("[hands] " .. text, logLevel)
 	end
+end
+
+local function executeOnCreatedCallback(...)
+	return uevrUtils.executeUEVRCallbacks("on_hands_created", table.unpack({...}))
+end
+function M.onCreatedCallback(func)
+	uevrUtils.registerUEVRCallback("on_hands_created", func)
+end
+
+local function executeIsHiddenCallback(...)
+	return uevrUtils.executeUEVRCallbacksWithPriorityBooleanResult("is_hands_hidden", table.unpack({...}))
+end
+function M.registerIsHiddenCallback(func)
+	uevrUtils.registerUEVRCallback("is_hands_hidden", func)
+end
+
+local function executeIsAnimatingFromMeshCallback(...)
+	return uevrUtils.executeUEVRCallbacksWithPriorityBooleanResult("is_hands_animating_from_mesh", table.unpack({...}))
+end
+function M.registerIsAnimatingFromMeshCallback(func)
+	uevrUtils.registerUEVRCallback("is_hands_animating_from_mesh", func)
 end
 
 local createInputHandler = doOnce(function()
@@ -235,6 +265,7 @@ function M.reset()
 	armsAnimationMeshes[Handed.Left] = {animating=false, mesh=nil, componentName=nil}
 	armsAnimationMeshes[Handed.Right] = {animating=false, mesh=nil, componentName=nil}
 	defaultAnimationMesh = nil
+	wereHidden = nil
 end
 
 function M.exists()
@@ -326,12 +357,21 @@ function M.createFromConfig(configuration, profileName, animationName)
 		if profile ~= nil then
 			local components = {}
 			for key, mesh in pairs(profile) do
-				--key = "Arms"
 				local meshPropertyName = mesh["Mesh"]
 				if meshPropertyName ~= "" then
-					local component = uevrUtils.getObjectFromDescriptor(meshPropertyName) -- "Pawn.Mesh(Arm).Glove")
-					if component ~= nil then
-						components[key] = component
+					if meshPropertyName == "Custom" then
+						if getCustomHandComponent ~= nil then
+							local component = getCustomHandComponent(key)
+							if component ~= nil then
+								components[key] = component
+							end
+						end
+					else
+						local component = uevrUtils.getObjectFromDescriptor(meshPropertyName, true) -- "Pawn.Mesh(Arm).Glove")
+						print(component,meshPropertyName)
+						if component ~= nil then
+							components[key] = component
+						end
 					end
 				end
 			end
@@ -350,20 +390,21 @@ function M.createFromConfig(configuration, profileName, animationName)
 				-- animDef.poses = poses
 			end
 
-			attachments.setAnimationIDs(configuration["attachments"])
-
 			M.create(components, profile, animations)
 
-			--going to need to call fixMeshFOV on lazy poll
-			for name, components in pairs(handComponents) do
-				--print(name, profileName, components[0], components[1])
-				local fovFixParam = configuration["profiles"][profileName][name]["FOV"]
-				if fovFixParam ~= nil and fovFixParam ~= "" then
-					uevrUtils.fixMeshFOV(components[Handed.Left], fovFixParam, 0.0, true, true, false)
-					uevrUtils.fixMeshFOV(components[Handed.Right], fovFixParam, 0.0, true, true, false)
-					registerFOVFix(profile)
+			--if M.exists() then
+				attachments.setAnimationIDs(configuration["attachments"])
+				--going to need to call fixMeshFOV on lazy poll
+				for name, handComponent in pairs(handComponents) do
+					--print(name, profileName, handComponent[0], handComponent[1])
+					local fovFixParam = configuration["profiles"][profileName][name]["FOV"]
+					if fovFixParam ~= nil and fovFixParam ~= "" then
+						uevrUtils.fixMeshFOV(handComponent[Handed.Left], fovFixParam, 0.0, true, true, false)
+						uevrUtils.fixMeshFOV(handComponent[Handed.Right], fovFixParam, 0.0, true, true, false)
+						registerFOVFix(profile)
+					end
 				end
-			end
+			--end
 
 		end
 	else
@@ -408,6 +449,7 @@ function M.create(skeletalMeshComponent, definition, handAnimations)
 							animation.add(animID, handComponents[name][index], handAnimations)
 							animation.initialize(animID, handComponents[name][index])
 						end
+						executeOnCreatedCallback(index, handComponents[name][index])
 					end
 				end
 				if autoHandleInput == true then
@@ -432,6 +474,11 @@ function M.createComponent(skeletalMeshComponent, name, hand, definition)
 		--not using an existing actor as owner. Mesh affects the hands opacity so its not appropriate
 		component = animation.createPoseableComponent(skeletalMeshComponent, nil, definition ~= nil and definition["UseDefaultPose"] == true)
 		if component ~= nil then
+			--this works but still need to reset all parent bones transforms to zero on each tick
+			-- if skeletalMeshComponent:is_a(uevrUtils.get_class("Class /Script/Engine.PoseableMeshComponent")) then
+			-- 	component:SetLeaderPoseComponent(skeletalMeshComponent, true)
+			-- end
+
 			--fixes flickering but > 1 causes a perfomance hit with dynamic shadows according to unreal doc
 			--a better way to do this should be found
 			component.BoundsScale = 16.0
@@ -513,7 +560,7 @@ function M.updateAnimationFromMesh(hand, mesh, componentName)
 			if definition ~= nil then
 				local jointName = definition["Name"]
 				if jointName ~= nil and jointName ~= "" then
-					local success, response = pcall(function()		
+					local success, response = pcall(function()
 						component:CopyPoseFromSkeletalComponent(mesh)
 						--component:SetLeaderPoseComponent(mesh, true)
 						local location = getValidVector(definition, "Location", {0,0,0})
@@ -567,6 +614,10 @@ function M.handleInput(state, attachment, hand, overrideTrigger, allowAutoHandle
 	if allowAutoHandle ~= true then
 		autoHandleInput = false --if something else is calling this then dont auto handle input
 	end
+	if disableAnimations then
+		--print("Animations are disabled, skipping handleInput")
+		return true
+	end
 
 	local isHoldingAttachment, attachmentExtension = getAttachmentStateAndExtension(attachment)
 
@@ -609,9 +660,17 @@ function M.handleInput(state, attachment, hand, overrideTrigger, allowAutoHandle
 	end
 end
 
+function M.disableAnimations(value)
+	disableAnimations = value
+end
+
 function M.handleInputForHands(state, rightAttachment, leftAttachment, overrideTrigger, allowAutoHandle)
 	if allowAutoHandle ~= true then
 		autoHandleInput = false --if something else is calling this then dont auto handle input
+	end
+	if disableAnimations then
+		--print("Animations are disabled, skipping handleInputForHands")
+		return true
 	end
 
 	if overrideTrigger == nil then overrideTrigger = false end
@@ -645,6 +704,17 @@ function M.handleInputForHands(state, rightAttachment, leftAttachment, overrideT
 	end
 end
 
+function M.hideHand(hand, val)
+	if val == nil then return end
+	for name, components in pairs(handComponents) do
+		if uevrUtils.getValid(components[hand]) ~= nil and components[hand].SetVisibility ~= nil then
+			M.print((val and "Hiding " or "Showing ") .. components[hand]:get_full_name() .. " hand component " .. tostring(hand), LogLevel.Debug)
+			components[hand]:SetVisibility(not val, true)
+		end
+	end
+end
+
+
 function M.hideHands(val)
 	if val == nil then return end
 	for name, components in pairs(handComponents) do
@@ -658,19 +728,6 @@ function M.hideHands(val)
 	end
 end
 
-local function executeIsHiddenCallback(...)
-	return uevrUtils.executeUEVRCallbacksWithPriorityBooleanResult("is_hands_hidden", table.unpack({...}))
-end
-function M.registerIsHiddenCallback(func)
-	uevrUtils.registerUEVRCallback("is_hands_hidden", func)
-end
-
-local function executeIsAnimatingFromMeshCallback(...)
-	return uevrUtils.executeUEVRCallbacksWithPriorityBooleanResult("is_hands_animating_from_mesh", table.unpack({...}))
-end
-function M.registerIsAnimatingFromMeshCallback(func)
-	uevrUtils.registerUEVRCallback("is_hands_animating_from_mesh", func)
-end
 
 function M.destroyHands()
 	--since we didnt use an existing actor as parent in createComponent(), destroy the owner actor too
@@ -1057,12 +1114,12 @@ function M.debug(skeletalMeshComponent, hand, rightTargetJoint, disableVisualiza
 	end
 end
 
-local isHiddenLast = nil
-uevrUtils.setInterval(100, function()
+uevrUtils.setInterval(200, function()
 	if M.exists() then
 		local isHidden, priority = executeIsHiddenCallback()
-		if isHidden ~= isHiddenLast then
-			isHiddenLast = isHidden
+		--print("Hand visibility check: isHidden=" .. tostring(isHidden) .. ", last=" .. tostring(wereHidden))
+		if isHidden ~= wereHidden then
+			wereHidden = isHidden
 			M.hideHands(isHidden or false)
 		end
 	end
@@ -1099,7 +1156,6 @@ end)
 uevrUtils.registerPreLevelChangeCallback(function(level)
 	M.print("Pre-Level changed in hands")
 	M.reset()
-	isHiddenLast = false
 	autoHandleInput = true
 	isLeftAnimatingLast = nil
 	isRightAnimatingLast = nil

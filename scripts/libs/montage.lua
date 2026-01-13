@@ -68,7 +68,7 @@ local uevrUtils = require("libs/uevr_utils")
 local configui = require("libs/configui")
 local hands = require("libs/hands")
 local ui = require("libs/ui")
-local pawn = require("libs/pawn")
+local pawnModule = require("libs/pawn")
 
 local M = {}
 
@@ -83,7 +83,7 @@ local isParametersDirty = false
 local montageList = {}
 local montageIDList = {}
 
-local montageState = {hands = nil, leftArm = nil, rightArm = nil, pawnBody = nil, pawnArms = nil, pawnArmBones = nil, motionSicknessCompensation = nil}
+local montageState = {hands = nil, leftArm = nil, rightArm = nil, pawnBody = nil, pawnArms = nil, pawnArmBones = nil, motionSicknessCompensation = nil, inputEnabled = nil}
 
 local stateConfig = {
     {stateKey = "hands", valueKey = "handsWhenActive"},
@@ -93,6 +93,7 @@ local stateConfig = {
     {stateKey = "pawnArms", valueKey = "pawnArmsWhenActive"},
     {stateKey = "pawnArmBones", valueKey = "pawnArmBonesWhenActive"},
     {stateKey = "motionSicknessCompensation", valueKey = "motionSicknessCompensationWhenActive"},
+    {stateKey = "inputEnabled", valueKey = "inputWhenActive"},
 }
 
 local currentLogLevel = LogLevel.Error
@@ -146,6 +147,22 @@ local developerWidgets = spliceableInlineArray{
 					widgetType = "input_text",
 					id = "handsWhenActivePriority",
 					label = " Hands Visibility",
+					initialValue = "0",
+					width = 35,
+				},
+				{
+					widgetType = "combo",
+					id = "inputWhenActive",
+					label = "",
+					selections = {"No effect", "Enable", "Disable"},
+					initialValue = 1,
+					width = 150,
+				},
+				{ widgetType = "same_line" },
+				{
+					widgetType = "input_text",
+					id = "inputWhenActivePriority",
+					label = " Input",
 					initialValue = "0",
 					width = 35,
 				},
@@ -356,9 +373,12 @@ local createDevMonitor = doOnce(function()
 			if parameters["montagelist"][montageName] == nil then
 				parameters["montagelist"][montageName] = {}
 				parameters["montagelist"][montageName]["label"] = montageName
+				parameters["montagelist"][montageName]["class_name"] = montage:get_full_name()
 				isParametersDirty = true
-
 				updateMontageList()
+			elseif parameters["montagelist"][montageName]["class_name"] == nil then
+				parameters["montagelist"][montageName]["class_name"] = montage:get_full_name()
+				isParametersDirty = true
 			end
 			--configui.setValue("lastMontagePlayed", montageName)
             M.addRecentMontage(montageName)  -- Track in recent history
@@ -396,6 +416,14 @@ local function updateStateIfHigherPriority(data, stateKey, valueKey)
 end
 
 uevrUtils.registerMontageChangeCallback(function(montage, montageName)
+	-- if montageState["inputEnabled"] == 3 and montageName == nil then
+	-- 	delay(3000, function()
+	-- 		montageState["inputEnabled"] = nil
+	-- 		montageState["inputEnabledPriority"] = 0
+	-- 	end)
+	-- 	return
+	-- end
+
 	for _, config in ipairs(stateConfig) do
 		montageState[config.stateKey] = nil
 		montageState[config.stateKey .. "Priority"] = 0
@@ -496,6 +524,17 @@ function M.clearRecentMontages()
     recentMontages = {}
 end
 
+function M.playMontage(montageName, speed)
+	if uevrUtils.getValid(pawn) ~= nil and parameters ~= nil and montageName ~= nil and montageName ~= "" and parameters["montagelist"][montageName] ~= nil then
+		local className = parameters["montagelist"][montageName]["class_name"]
+		if className ~= nil then
+			local montage = uevrUtils.find_required_object(className)
+			if montage ~= nil then
+				local result = pawn:PlayAnimMontage(montage, speed or 1.0, uevrUtils.fname_from_string(""))
+			end
+		end
+	end
+end
 -- Returns recent montages as a newline-delimited string
 function M.getRecentMontagesAsString()
     return table.concat(recentMontages, "\n")
@@ -513,20 +552,24 @@ ui.registerIsInMotionSicknessCausingSceneCallback(function()
 	return montageState["motionSicknessCompensation"], montageState["motionSicknessCompensationPriority"]
 end)
 
-pawn.registerIsArmBonesHiddenCallback(function()
+pawnModule.registerIsArmBonesHiddenCallback(function()
 	return montageState["pawnArmBones"], montageState["pawnArmBonesPriority"]
 end)
 
-pawn.registerIsPawnBodyHiddenCallback(function()
+pawnModule.registerIsPawnBodyHiddenCallback(function()
 	return montageState["pawnBody"], montageState["pawnBodyPriority"]
 end)
 
-pawn.registerIsPawnArmsHiddenCallback(function()
+pawnModule.registerIsPawnArmsHiddenCallback(function()
 	return montageState["pawnArms"], montageState["pawnArmsPriority"]
 end)
 
 hands.registerIsHiddenCallback(function()
 	return montageState["hands"], montageState["handsPriority"]
+end)
+
+uevrUtils.registerUEVRCallback("is_input_disabled", function()
+	return montageState["inputEnabled"] ~= nil and (not montageState["inputEnabled"]) or nil, montageState["inputEnabledPriority"]
 end)
 
 -- Register update handlers for all state configs and their priorities

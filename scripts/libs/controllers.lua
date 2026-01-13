@@ -164,7 +164,8 @@ local function createControllerComponent(parentActor, sourceName, handIndex)
 		local motionControllerComponent = uevrUtils.create_component_of_class("Class /Script/HeadMountedDisplay.MotionControllerComponent", true, uevrUtils.get_transform(), false, parentActor)
 		--local motionControllerComponent = parentActor:AddComponentByClass(uevrUtils.get_class("Class /Script/HeadMountedDisplay.MotionControllerComponent"), true, uevrUtils.get_transform(), false)
 		if motionControllerComponent ~= nil then
-			motionControllerComponent:SetCollisionEnabled(0, false)	
+			motionControllerComponent:SetCollisionEnabled(0, false)
+			--motionControllerComponent:SetCollisionResponseToAllChannels(0)
 			motionControllerComponent.MotionSource = uevrUtils.fname_from_string(sourceName)
 			if motionControllerComponent.Hand ~= nil then
 				motionControllerComponent.Hand = handIndex
@@ -218,6 +219,21 @@ local function resetMotionControllers()
 	if UEVR_UObjectHook.remove_all_motion_controller_states ~= nil then
 		UEVR_UObjectHook.remove_all_motion_controller_states()
 	end
+end
+
+local createAutoCreationMonitor = doOnce(function()
+    uevrUtils.setInterval(1000, function()
+        if M.controllerExists(Handed.Left, false) == false then
+            M.createController(Handed.Left)
+        end
+        if M.controllerExists(Handed.Right, false) == false then
+            M.createController(Handed.Right)
+        end
+    end)
+end, Once.EVER)
+
+function M.autoMonitorHands()
+	createAutoCreationMonitor()
 end
 
 function M.onLevelChange()
@@ -436,6 +452,21 @@ function M.getControllerTargetLocation(handed, collisionChannel, ignoreActors, t
 	return nil
 end
 
+-- returns an float or nil
+function M.getDistanceFromController(controllerID, component)
+	if component ~= nil then
+		local loc1 = M.getControllerLocation(controllerID)
+		if loc1 ~= nil then
+			local loc2 = component:K2_GetComponentLocation()
+			if loc2 ~= nil then
+				return uevrUtils.distanceBetween(loc1, loc2)
+			end
+		end
+	end
+	return nil
+end
+
+
 local isRestored = false
 uevrUtils.registerPreLevelChangeCallback(function(level)
 	M.print("Pre-Level changed in controllers")
@@ -451,7 +482,6 @@ uevrUtils.registerLevelChangeCallback(function(level)
 	M.createController(1)
 	M.createController(2)
 end)
-
 
 return M
 

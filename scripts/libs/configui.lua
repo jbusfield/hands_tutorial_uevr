@@ -479,9 +479,20 @@ end
 
 local function getVector2FromArray(arr)
 	local vec = UEVR_Vector2f.new()
-	if arr == nil or #arr < 2 then
+	if arr == nil then
 		vec.x = 0
 		vec.y = 0
+	elseif #arr < 2 then
+		if arr.X ~= nil then
+			vec.x = arr.X
+			vec.y = arr.Y or 0
+		elseif arr.x ~= nil then
+			vec.x = arr.x
+			vec.y = arr.y or 0
+		else
+			vec.x = 0
+			vec.y = 0
+		end
 	else
 		vec.x = arr[1]
 		vec.y = arr[2]
@@ -490,15 +501,33 @@ local function getVector2FromArray(arr)
 end
 
 local function getVector3FromArray(arr)
-	if arr == nil or #arr < 3 then
+	if arr == nil then
 		return Vector3f.new(0, 0, 0)
+	end
+	if #arr < 3 then
+		if arr.X ~= nil then
+			return Vector3f.new(arr.X, arr.Y or 0, arr.Z or 0)
+		elseif arr.x ~= nil then
+			return Vector3f.new(arr.x, arr.y or 0, arr.z or 0)
+		else
+			return Vector3f.new(0, 0, 0)
+		end
 	end
 	return Vector3f.new(arr[1], arr[2], arr[3])
 end
 
 local function getVector4FromArray(arr)
-	if arr == nil or #arr < 4 then
+	if arr == nil then
 		return Vector4f.new(0, 0, 0, 0)
+	end
+	if #arr < 4 then
+		if arr.X ~= nil then
+			return Vector4f.new(arr.X, arr.Y or 0, arr.Z or 0, arr.W or 0)
+		elseif arr.x ~= nil then
+			return Vector4f.new(arr.x, arr.y or 0, arr.z or 0, arr.w or 0)
+		else
+			return Vector4f.new(0, 0, 0, 0)
+		end
 	end
 	return Vector4f.new(arr[1], arr[2], arr[3], arr[4])
 end
@@ -522,6 +551,43 @@ local function getArrayFromVector4(vec)
 		return {0, 0, 0, 0}
 	end
 	return {vec.X, vec.Y, vec.Z, vec.W}
+end
+
+local function getCleanValue(value)
+	if type(value) == "table" then
+		if #value == 0 then
+			if value.X ~= nil then
+				if value.W ~= nil then
+					value = Vector4f.new(value.X, value.Y or 0, value.Z or 0, value.W)
+				elseif value.Z ~= nil then
+					value = Vector3f.new(value.X, value.Y or 0, value.Z)
+				elseif value.Y ~= nil then
+					local vec = UEVR_Vector2f.new()
+					vec.X = value.X
+					vec.Y = value.Y
+					value = vec
+				end
+			elseif value.x ~= nil then
+				if value.w ~= nil then
+					value = Vector4f.new(value.x, value.y or 0, value.z or 0, value.w)
+				elseif value.z ~= nil then
+					value = Vector3f.new(value.x, value.y or 0, value.z)
+				elseif value.y ~= nil then
+					local vec = UEVR_Vector2f.new()
+					vec.X = value.x
+					vec.Y = value.y
+					value = vec
+				end
+			end
+		elseif #value == 2 then
+			value = getVector2FromArray(value)
+		elseif #value == 3 then
+			value = getVector3FromArray(value)
+		elseif #value == 4 then
+			value = getVector4FromArray(value)
+		end
+	end
+	return value
 end
 
 local function drawUI(panelID)
@@ -636,7 +702,7 @@ local function drawUI(panelID)
 			elseif item.widgetType == "end_group" then
 				imgui.end_group()
 			elseif item.widgetType == "begin_child_window" then
-				imgui.begin_child_window(getVector2FromArray(item.size), item.border)
+				imgui.begin_child_window(getVector2FromArray(item.size), item.border, item.flags)
 			elseif item.widgetType == "end_child_window" then
 				imgui.end_child_window()
 			elseif item.widgetType == "tree_node" then
@@ -863,6 +929,17 @@ function M.createPanel(panelDefinition)
 					imgui.end_window()
 					if not opened then
 						panelList[panelID]["isHidden"] = true
+						panelList[panelID]["userClosed"] = true
+					end
+				end
+				if panelDefinition["stateFollowsParent"] == true and uevr.params.functions.is_drawing_ui ~= nil then
+					local isDrawingUI = uevr.params.functions.is_drawing_ui()
+					if isDrawingUI and panelList[panelID]["userClosed"] ~= true then
+						panelList[panelID]["isHidden"] = false
+					end
+					if isDrawingUI == false then
+						panelList[panelID]["userClosed"] = false
+						panelList[panelID]["isHidden"] = true
 					end
 				end
 			end)
@@ -870,7 +947,7 @@ function M.createPanel(panelDefinition)
 			--table.insert(customPanelList, panelID)
 			if (panelList[panelID]["isHidden"] == nil or panelList[panelID]["isHidden"] == false) then
 				uevr.lua.add_script_panel(label, function()
-						drawUI(panelID)
+					drawUI(panelID)
 				end)
 			end
 		end
@@ -957,17 +1034,18 @@ function M.load(panelID, fileName)
 				-- else
 				-- 	configValues[panelID][key] = val
 				-- end
-				if type(val) == "table" then
-					if #val == 2 then
-						configValues[panelID][key] = getVector2FromArray(val)
-					elseif #val == 3 then
-						configValues[panelID][key] = getVector3FromArray(val)
-					elseif #val == 4 then
-						configValues[panelID][key] = getVector4FromArray(val)
-					end
-				else
-					configValues[panelID][key] = val
-				end
+				configValues[panelID][key] = getCleanValue(val)
+				-- if type(val) == "table" then
+				-- 	if #val == 2 then
+				-- 		configValues[panelID][key] = getVector2FromArray(val)
+				-- 	elseif #val == 3 then
+				-- 		configValues[panelID][key] = getVector3FromArray(val)
+				-- 	elseif #val == 4 then
+				-- 		configValues[panelID][key] = getVector4FromArray(val)
+				-- 	end
+				-- else
+				-- 	configValues[panelID][key] = val
+				-- end
 
 				itemMap[key] = panelID
 
@@ -992,6 +1070,34 @@ function M.load(panelID, fileName)
 	end
 end
 
+--convert userdata types to native lua types for json saving
+--this function exists in uevrUtils but since we dont include that here we need to redefine it
+function M.getNativeValue(val, useTable)
+	local returnValue = val
+	if type(val) == "userdata" then
+---@diagnostic disable-next-line: undefined-field
+		if val.x ~= nil and val.y ~= nil and val.z == nil and val.w == nil then
+			returnValue = getArrayFromVector2(val)
+			if useTable == true then
+				returnValue = {X=returnValue[1], Y=returnValue[2]}
+			end
+---@diagnostic disable-next-line: undefined-field
+		elseif val.x ~= nil and val.y ~= nil and val.z ~= nil and val.w == nil then
+			returnValue = getArrayFromVector3(val)
+			if useTable == true then
+				returnValue = {X=returnValue[1], Y=returnValue[2], Z=returnValue[3]}
+			end
+---@diagnostic disable-next-line: undefined-field
+		elseif val.x ~= nil and val.y ~= nil and val.z ~= nil and val.w ~= nil then
+			returnValue = getArrayFromVector4(val)
+			if useTable == true then
+				returnValue = {X=returnValue[1], Y=returnValue[2], Z=returnValue[3], W=returnValue[4]}
+			end
+		end
+	end
+	return returnValue
+end
+
 function M.save(panelID)
 	local panel = panelList[panelID]
 	if panel ~= nil then
@@ -1001,21 +1107,24 @@ function M.save(panelID)
 			for key, val in pairs(configValues[panelID]) do
 				--print("Saving ", key, val, type(val))
 				--things like vector3 need to be converted into a json friendly format
-				if type(val) == "userdata" then
-					--print(val.x,val.y,val.z,val.w)
----@diagnostic disable-next-line: undefined-field
-					if val.x ~= nil and val.y ~= nil and val.z == nil and val.w == nil then
-						saveConfig[key] = getArrayFromVector2(val)
----@diagnostic disable-next-line: undefined-field
-					elseif val.x ~= nil and val.y ~= nil and val.z ~= nil and val.w == nil then
-						saveConfig[key] = getArrayFromVector3(val)
----@diagnostic disable-next-line: undefined-field
-					elseif val.x ~= nil and val.y ~= nil and val.z ~= nil and val.w ~= nil then
-						saveConfig[key] = getArrayFromVector4(val)
-					end
-				else
-					saveConfig[key] = val
-				end
+				saveConfig[key] = M.getNativeValue(val)
+
+-- 				if type(val) == "userdata" then
+-- 					--print(val.x,val.y,val.z,val.w)
+-- ---@diagnostic disable-next-line: undefined-field
+-- 					if val.x ~= nil and val.y ~= nil and val.z == nil and val.w == nil then
+-- 						saveConfig[key] = getArrayFromVector2(val)
+-- ---@diagnostic disable-next-line: undefined-field
+-- 					elseif val.x ~= nil and val.y ~= nil and val.z ~= nil and val.w == nil then
+-- 						saveConfig[key] = getArrayFromVector3(val)
+-- ---@diagnostic disable-next-line: undefined-field
+-- 					elseif val.x ~= nil and val.y ~= nil and val.z ~= nil and val.w ~= nil then
+-- 						saveConfig[key] = getArrayFromVector4(val)
+-- 					end
+-- 				else
+-- 					saveConfig[key] = val
+-- 				end
+
 				-- local item = getDefinitionElement(panelID, key)
 				-- if item ~= nil then
 				-- 	if item.widgetType == "drag_float2" then
@@ -1101,16 +1210,30 @@ function M.setValue(widgetID, value, noCallbacks)
 	-- 	doUpdate(M.getPanelID(widgetID), widgetID, value, nil, noCallbacks)
 	-- end
 
-	if type(value) == "table" then
-		if #value == 2 then
-			value = getVector2FromArray(value)
-		elseif #value == 3 then
-			value = getVector3FromArray(value)
-		elseif #value == 4 then
-			value = getVector4FromArray(value)
-		end
-	end
-	doUpdate(M.getPanelID(widgetID), widgetID, value, nil, noCallbacks)
+	-- if type(value) == "table" then
+	-- 	if #value == 0 then
+	-- 		if value.X ~= nil then
+	-- 			if value.W ~= nil then
+	-- 				value = Vector4f.new(value.X, value.Y, value.Z, value.W)
+	-- 			elseif value.Z ~= nil then
+	-- 				value = Vector3f.new(value.X, value.Y, value.Z)
+	-- 			elseif value.Y ~= nil then
+	-- 				local vec = UEVR_Vector2f.new()
+	-- 				vec.X = value.X
+	-- 				vec.Y = value.Y
+	-- 				value = vec
+	-- 			end
+	-- 		end
+	-- 	elseif #value == 2 then
+	-- 		value = getVector2FromArray(value)
+	-- 	elseif #value == 3 then
+	-- 		value = getVector3FromArray(value)
+	-- 	elseif #value == 4 then
+	-- 		value = getVector4FromArray(value)
+	-- 	end
+	-- end
+	if type(value) == "table" and next(value) == nil then return end --check if the table is empty
+	doUpdate(M.getPanelID(widgetID), widgetID, getCleanValue(value), nil, noCallbacks)
 end
 
 function M.setSelections(widgetID, selections)
